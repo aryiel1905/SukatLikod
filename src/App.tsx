@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Maximize2,
   Bell,
+  X,
 } from "lucide-react";
 import {
   DrawingUtils,
@@ -85,12 +86,25 @@ function trunkAngleDeg(midShoulder: Point3, midHip: Point3) {
   return (rad * 180) / Math.PI;
 }
 
+function trunkAngleSignedDeg(midShoulder: Point3, midHip: Point3) {
+  const v = vsub(midShoulder, midHip);
+  return (Math.atan2(v.x, -v.y) * 180) / Math.PI;
+}
+
 function headForwardM(nose: Point3, midShoulder: Point3) {
   return Math.abs((nose?.z ?? 0) - (midShoulder?.z ?? 0));
 }
 
+function headForwardSignedM(nose: Point3, midShoulder: Point3) {
+  return (nose?.z ?? 0) - (midShoulder?.z ?? 0);
+}
+
 function shoulderTiltM(ls: Point3, rs: Point3) {
   return Math.abs((ls?.y ?? 0) - (rs?.y ?? 0));
+}
+
+function shoulderTiltSignedM(ls: Point3, rs: Point3) {
+  return (ls?.y ?? 0) - (rs?.y ?? 0);
 }
 
 function metricQuality(value: number, threshold: number) {
@@ -135,6 +149,11 @@ export default function App() {
     headForward: 0,
     shoulderTilt: 0,
   });
+  const [signedMetrics, setSignedMetrics] = useState({
+    trunkAngle: 0,
+    headForward: 0,
+    shoulderTilt: 0,
+  });
 
   const [sensitivity, setSensitivity] = useState<Sensitivity>({
     trunkAngle: 18,
@@ -169,8 +188,10 @@ export default function App() {
     setIsActive(false);
     setPill("idle");
     setFeedback("Press Start Session to begin.");
+    setFeedbacks([]);
     setScore(0);
     setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
+    setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
     resetBuffers();
   }, [resetBuffers]);
 
@@ -338,6 +359,9 @@ export default function App() {
       const tDeg = trunkAngleDeg(midShoulder, midHip);
       const hM = headForwardM(nose as Point3, midShoulder);
       const sM = shoulderTiltM(ls as Point3, rs as Point3);
+      const tSigned = trunkAngleSignedDeg(midShoulder, midHip);
+      const hSigned = headForwardSignedM(nose as Point3, midShoulder);
+      const sSigned = shoulderTiltSignedM(ls as Point3, rs as Point3);
 
       pushLimited(buffersRef.current.trunk, tDeg);
       pushLimited(buffersRef.current.head, hM);
@@ -345,6 +369,11 @@ export default function App() {
 
       const d = computeDecision();
       setMetrics({ trunkAngle: tDeg, headForward: hM, shoulderTilt: sM });
+      setSignedMetrics({
+        trunkAngle: tSigned,
+        headForward: hSigned,
+        shoulderTilt: sSigned,
+      });
 
       const nextScore = d.score ?? 0;
       setScore(nextScore);
@@ -463,7 +492,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-slate-100 font-sans p-4 md:p-8 flex items-center justify-center">
       <div className="w-full flex flex-col gap-6 h-full lg:h-[85vh]">
-        <div className="flex-1 flex gap-6 min-h-0">
+        <div className="flex-1 flex min-h-0 gap-4 lg:gap-6">
           <div className="hidden lg:flex h-full min-h-0 w-60 xl:w-64 flex-shrink-0 flex-col gap-4">
             <div className="items-center text-center flex flex-col gap-2">
               <h1 className="text-5xl font-bold tracking-tight  bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
@@ -509,26 +538,26 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="absolute -right-4 -bottom-6 opacity-30 group-hover:opacity-50 transition-opacity pointer-events-none">
-                  <svg className="w-24 h-24 transform -rotate-90">
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none">
+                  <svg className="w-20 h-20 transform -rotate-90">
                     <circle
-                      cx="48"
-                      cy="48"
-                      r="40"
+                      cx="40"
+                      cy="40"
+                      r="33"
                       stroke="currentColor"
                       strokeWidth="8"
                       fill="transparent"
-                      className="text-white/5"
+                      className="text-white/10"
                     />
                     <circle
-                      cx="48"
-                      cy="48"
-                      r="40"
+                      cx="40"
+                      cy="40"
+                      r="33"
                       stroke="currentColor"
                       strokeWidth="8"
                       fill="transparent"
-                      strokeDasharray={251.2}
-                      strokeDashoffset={251.2 - (251.2 * score) / 100}
+                      strokeDasharray={207.3}
+                      strokeDashoffset={207.3 - (207.3 * score) / 100}
                       className={`${getScoreColor(score)} transition-all duration-1000 ease-out`}
                     />
                   </svg>
@@ -541,7 +570,13 @@ export default function App() {
                 unit="deg"
                 icon={Activity}
                 variant="trunk"
-                progress={metricQuality(metrics.trunkAngle, sensitivity.trunkAngle)}
+                rawValue={metrics.trunkAngle}
+                signedValue={signedMetrics.trunkAngle}
+                threshold={sensitivity.trunkAngle}
+                progress={metricQuality(
+                  metrics.trunkAngle,
+                  sensitivity.trunkAngle,
+                )}
               />
               <MetricCard
                 label="Head Forward"
@@ -549,6 +584,9 @@ export default function App() {
                 unit="m"
                 icon={ChevronRight}
                 variant="head"
+                rawValue={metrics.headForward}
+                signedValue={signedMetrics.headForward}
+                threshold={sensitivity.headDistance}
                 progress={metricQuality(
                   metrics.headForward,
                   sensitivity.headDistance,
@@ -560,6 +598,9 @@ export default function App() {
                 unit="m"
                 icon={Maximize2}
                 variant="shoulder"
+                rawValue={metrics.shoulderTilt}
+                signedValue={signedMetrics.shoulderTilt}
+                threshold={sensitivity.shoulderTilt}
                 progress={metricQuality(
                   metrics.shoulderTilt,
                   sensitivity.shoulderTilt,
@@ -568,197 +609,217 @@ export default function App() {
             </div>
           </div>
 
-          <div className="relative flex-1 bg-slate-900 rounded-[2rem] overflow-hidden border border-white/5 shadow-2xl group">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="absolute inset-0 w-full h-full object-cover -scale-x-100"
-            />
-            <canvas
-              ref={canvasRef}
-              className="absolute inset-0 w-full h-full object-cover -scale-x-100"
-            />
+          <div
+            className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}
+          >
+            <div className="relative flex-1 bg-slate-900 rounded-[2rem] overflow-hidden border border-white/5 shadow-2xl group">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 w-full h-full object-cover -scale-x-100"
+              />
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 w-full h-full object-cover -scale-x-100"
+              />
 
-            {!isActive ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm z-10">
-                <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-4">
-                  <Camera size={32} className="text-white/20" />
+              {!isActive ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm z-10">
+                  <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-4">
+                    <Camera size={32} className="text-white/20" />
+                  </div>
+                  <p className="text-white/40 font-medium">
+                    Camera Feed Inactive
+                  </p>
                 </div>
-                <p className="text-white/40 font-medium">
-                  Camera Feed Inactive
-                </p>
-              </div>
-            ) : null}
+              ) : null}
 
-            <div className="absolute top-4 left-4 right-4 z-20 lg:hidden bg-black/45 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 flex items-center justify-end gap-3">
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowSettings((v) => !v)}
-                  className="flex items-center justify-center p-2.5 rounded-full transition-all border border-transparent bg-transparent text-black hover:bg-white"
-                  title="Toggle Calibration Settings"
-                >
-                  <Settings2 size={18} />
-                </button>
-                <button
-                  onClick={isActive ? stop : start}
-                  disabled={isLoading}
-                  className={`lg:hidden flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : "bg-white text-black hover:bg-slate-200 shadow-lg"} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
-                >
-                  {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
-                  {isActive ? "Stop" : "Start Session"}
-                </button>
+              <div className="absolute top-4 left-4 right-4 z-20 lg:hidden bg-black/45 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 flex items-center justify-end gap-3">
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowSettings((v) => !v)}
+                    className="flex items-center justify-center p-2.5 rounded-full transition-all border border-transparent bg-transparent text-black hover:bg-white"
+                    title="Toggle Calibration Settings"
+                  >
+                    <Settings2 size={18} />
+                  </button>
+                  <button
+                    onClick={isActive ? stop : start}
+                    disabled={isLoading}
+                    className={`lg:hidden flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : "bg-white text-black hover:bg-slate-200 shadow-lg"} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
+                    {isActive ? "Stop" : "Start Session"}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}
+              >
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-white/20 border-dashed rounded-full" />
+              </div>
+
+              <div className="absolute right-4 top-4 bottom-4 w-72 lg:w-80 bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl flex flex-col overflow-hidden z-30 shadow-2xl">
+                <div className="px-5 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell size={16} className="text-white/90" />
+                    <h3 className="font-bold text-sm text-white uppercase tracking-wider">
+                      Session Log
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setShowSettings((v) => !v)}
+                    className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white  hover:text-black"
+                    title="Toggle Calibration Settings"
+                  >
+                    <Settings2 size={16} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full">
+                  {!isActive && (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-70 space-y-3">
+                      <Bell size={24} className="text-white/40" />
+                      <span className="text-xs font-medium text-white/80">
+                        Monitoring paused.
+                        <br />
+                        Start session to view feedback.
+                      </span>
+                    </div>
+                  )}
+                  {feedbacks.map((f) => (
+                    <div
+                      key={f.id}
+                      className={`p-3 rounded-xl border ${f.bg} backdrop-blur-md transition-all`}
+                    >
+                      <div className="flex justify-between items-center mb-1">
+                        <span className={`text-xs font-bold ${f.color}`}>
+                          {f.title}
+                        </span>
+                        <span className="text-[10px] text-white/50">
+                          {f.time}
+                        </span>
+                      </div>
+                      <p className="text-[13px] text-white/90 leading-relaxed">
+                        {f.text}
+                      </p>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+
+                <div className="p-4 bg-white/5 border-t border-white/10">
+                  <div className="bg-black/50 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2">
+                    <div
+                      className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-500 animate-pulse" : "bg-white/20"}`}
+                    />
+                    <span className="text-xs text-white/70">
+                      {isActive ? feedback : "System standby"}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div
-              className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}
+              className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out ${showSettings ? "w-80 opacity-100" : "w-0 opacity-0"}`}
             >
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-white/20 border-dashed rounded-full" />
-            </div>
-
-            <div className="absolute right-4 top-4 bottom-4 w-72 lg:w-80 bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl flex flex-col overflow-hidden z-30 shadow-2xl">
-              <div className="px-5 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell size={16} className="text-white/90" />
-                  <h3 className="font-bold text-sm text-white uppercase tracking-wider">
-                    Session Log
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setShowSettings((v) => !v)}
-                  className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white  hover:text-black"
-                  title="Toggle Calibration Settings"
-                >
-                  <Settings2 size={16} />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full">
-                {!isActive && (
-                  <div className="h-full flex flex-col items-center justify-center text-center opacity-70 space-y-3">
-                    <Bell size={24} className="text-white/40" />
-                    <span className="text-xs font-medium text-white/80">
-                      Monitoring paused.
-                      <br />
-                      Start session to view feedback.
-                    </span>
+              <div
+                aria-hidden={!showSettings}
+                className={`w-80 h-full bg-white/5 backdrop-blur-md border border-white/10 rounded-[2rem] p-6 flex flex-col overflow-y-auto transition-transform duration-200 ease-in-out ${showSettings ? "translate-x-0 pointer-events-auto" : "translate-x-3 pointer-events-none"}`}
+              >
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-2">
+                    <Settings2 size={18} className="text-white/60" />
+                    <h3 className="font-bold text-sm uppercase tracking-wider">
+                      Calibration
+                    </h3>
                   </div>
-                )}
-                {feedbacks.map((f) => (
-                  <div
-                    key={f.id}
-                    className={`p-3 rounded-xl border ${f.bg} backdrop-blur-md transition-all`}
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="w-9 h-9 rounded-lg  text-white/70 hover:text-white hover:bg-white/10 transition-colors flex items-center justify-center"
+                    title="Close calibration"
+                    aria-label="Close calibration"
                   >
-                    <div className="flex justify-between items-center mb-1">
-                      <span className={`text-xs font-bold ${f.color}`}>
-                        {f.title}
-                      </span>
-                      <span className="text-[10px] text-white/50">
-                        {f.time}
-                      </span>
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="space-y-8">
+                  {(
+                    [
+                      {
+                        key: "trunkAngle",
+                        label: "Trunk Angle Threshold",
+                        unit: "deg",
+                        max: 45,
+                        step: 1,
+                      },
+                      {
+                        key: "headDistance",
+                        label: "Head Distance Limit",
+                        unit: "m",
+                        max: 0.5,
+                        step: 0.01,
+                      },
+                      {
+                        key: "shoulderTilt",
+                        label: "Shoulder Tilt Sensitivity",
+                        unit: "m",
+                        max: 0.2,
+                        step: 0.01,
+                      },
+                    ] as const
+                  ).map((setting) => (
+                    <div key={setting.key} className="space-y-3">
+                      <div className="flex justify-between items-center px-1">
+                        <label className="text-xs font-semibold text-white/60">
+                          {setting.label}
+                        </label>
+                        <span className="text-xs font-bold text-white tabular-nums">
+                          {sensitivity[setting.key].toFixed(
+                            setting.step < 1 ? 2 : 0,
+                          )}{" "}
+                          <span className="text-[10px] text-white/30 ml-0.5">
+                            {setting.unit}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="relative h-6 flex items-center">
+                        <input
+                          type="range"
+                          min={setting.key === "trunkAngle" ? 5 : 0.01}
+                          max={setting.max}
+                          step={setting.step}
+                          value={sensitivity[setting.key]}
+                          onChange={(e) =>
+                            setSensitivity((s) => ({
+                              ...s,
+                              [setting.key]: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
+                        />
+                      </div>
                     </div>
-                    <p className="text-[13px] text-white/90 leading-relaxed">
-                      {f.text}
+                  ))}
+                </div>
+
+                <div className="mt-auto pt-8">
+                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
+                    <p className="text-[10px] leading-relaxed text-white/40 italic">
+                      Note: Higher sensitivity values increase the threshold for
+                      warnings. Adjust based on your ergonomic workstation
+                      setup.
                     </p>
                   </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="p-4 bg-white/5 border-t border-white/10">
-                <div className="bg-black/50 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2">
-                  <div
-                    className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-500 animate-pulse" : "bg-white/20"}`}
-                  />
-                  <span className="text-xs text-white/70">
-                    {isActive ? feedback : "System standby"}
-                  </span>
                 </div>
               </div>
             </div>
           </div>
-
-          {showSettings && (
-            <div className="w-80 flex-shrink-0 bg-white/5 backdrop-blur-md border border-white/10 rounded-[2rem] p-6 flex flex-col transition-opacity overflow-y-auto">
-              <div className="flex items-center gap-2 mb-8">
-                <Settings2 size={18} className="text-white/60" />
-                <h3 className="font-bold text-sm uppercase tracking-wider">
-                  Calibration
-                </h3>
-              </div>
-
-              <div className="space-y-8">
-                {(
-                  [
-                    {
-                      key: "trunkAngle",
-                      label: "Trunk Angle Threshold",
-                      unit: "deg",
-                      max: 45,
-                      step: 1,
-                    },
-                    {
-                      key: "headDistance",
-                      label: "Head Distance Limit",
-                      unit: "m",
-                      max: 0.5,
-                      step: 0.01,
-                    },
-                    {
-                      key: "shoulderTilt",
-                      label: "Shoulder Tilt Sensitivity",
-                      unit: "m",
-                      max: 0.2,
-                      step: 0.01,
-                    },
-                  ] as const
-                ).map((setting) => (
-                  <div key={setting.key} className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
-                      <label className="text-xs font-semibold text-white/60">
-                        {setting.label}
-                      </label>
-                      <span className="text-xs font-bold text-white tabular-nums">
-                        {sensitivity[setting.key].toFixed(
-                          setting.step < 1 ? 2 : 0,
-                        )}{" "}
-                        <span className="text-[10px] text-white/30 ml-0.5">
-                          {setting.unit}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="relative h-6 flex items-center">
-                      <input
-                        type="range"
-                        min={setting.key === "trunkAngle" ? 5 : 0.01}
-                        max={setting.max}
-                        step={setting.step}
-                        value={sensitivity[setting.key]}
-                        onChange={(e) =>
-                          setSensitivity((s) => ({
-                            ...s,
-                            [setting.key]: Number(e.target.value),
-                          }))
-                        }
-                        className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-auto pt-8">
-                <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
-                  <p className="text-[10px] leading-relaxed text-white/40 italic">
-                    Note: Higher sensitivity values increase the threshold for
-                    warnings. Adjust based on your ergonomic workstation setup.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="grid grid-cols-2 lg:hidden gap-4 flex-shrink-0">
@@ -785,26 +846,26 @@ export default function App() {
               </div>
             </div>
 
-            <div className="absolute -right-4 -bottom-6 opacity-30 group-hover:opacity-50 transition-opacity pointer-events-none">
-              <svg className="w-24 h-24 transform -rotate-90">
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none">
+              <svg className="w-20 h-20 transform -rotate-90">
                 <circle
-                  cx="48"
-                  cy="48"
-                  r="40"
+                  cx="40"
+                  cy="40"
+                  r="33"
                   stroke="currentColor"
                   strokeWidth="8"
                   fill="transparent"
-                  className="text-white/5"
+                  className="text-white/10"
                 />
                 <circle
-                  cx="48"
-                  cy="48"
-                  r="40"
+                  cx="40"
+                  cy="40"
+                  r="33"
                   stroke="currentColor"
                   strokeWidth="8"
                   fill="transparent"
-                  strokeDasharray={251.2}
-                  strokeDashoffset={251.2 - (251.2 * score) / 100}
+                  strokeDasharray={207.3}
+                  strokeDashoffset={207.3 - (207.3 * score) / 100}
                   className={`${getScoreColor(score)} transition-all duration-1000 ease-out`}
                 />
               </svg>
@@ -817,6 +878,9 @@ export default function App() {
             unit="deg"
             icon={Activity}
             variant="trunk"
+            rawValue={metrics.trunkAngle}
+            signedValue={signedMetrics.trunkAngle}
+            threshold={sensitivity.trunkAngle}
             progress={metricQuality(metrics.trunkAngle, sensitivity.trunkAngle)}
           />
           <MetricCard
@@ -825,7 +889,13 @@ export default function App() {
             unit="m"
             icon={ChevronRight}
             variant="head"
-            progress={metricQuality(metrics.headForward, sensitivity.headDistance)}
+            rawValue={metrics.headForward}
+            signedValue={signedMetrics.headForward}
+            threshold={sensitivity.headDistance}
+            progress={metricQuality(
+              metrics.headForward,
+              sensitivity.headDistance,
+            )}
           />
           <MetricCard
             label="Shoulder Tilt"
@@ -833,6 +903,9 @@ export default function App() {
             unit="m"
             icon={Maximize2}
             variant="shoulder"
+            rawValue={metrics.shoulderTilt}
+            signedValue={signedMetrics.shoulderTilt}
+            threshold={sensitivity.shoulderTilt}
             progress={metricQuality(
               metrics.shoulderTilt,
               sensitivity.shoulderTilt,
@@ -850,7 +923,10 @@ function MetricCard({
   unit,
   icon: Icon,
   variant,
-  progress,
+  rawValue,
+  signedValue,
+  threshold,
+  progress: _progress,
   colorClass,
 }: {
   label: string;
@@ -858,152 +934,17 @@ function MetricCard({
   unit: string;
   icon: ComponentType<{ size?: number; className?: string }>;
   variant: "trunk" | "head" | "shoulder";
+  rawValue: number;
+  signedValue: number;
+  threshold: number;
   progress: number;
   colorClass?: string;
 }) {
-  const p = clamp(progress, 0, 100);
-  const qualityColor =
-    p > 80 ? "#34d399" : p > 55 ? "#fbbf24" : "#fb7185";
-
-  const strokeTone =
-    p > 80
-      ? "text-emerald-400/40"
-      : p > 55
-        ? "text-amber-400/40"
-        : "text-rose-400/45";
-
-  const ornament =
-    variant === "trunk" ? (
-      <svg
-        className={`w-24 h-24 ${strokeTone}`}
-        viewBox="0 0 120 120"
-        fill="none"
-      >
-        <line
-          x1="60"
-          y1="26"
-          x2="60"
-          y2="96"
-          stroke="currentColor"
-          strokeWidth="4"
-          opacity="0.25"
-        />
-        <line
-          x1="60"
-          y1="24"
-          x2={60 + (35 * (100 - p)) / 100}
-          y2="96"
-          stroke={qualityColor}
-          strokeWidth="6"
-          strokeLinecap="round"
-          style={{ transition: "all 700ms ease" }}
-        />
-        <circle
-          cx="60"
-          cy="24"
-          r="5"
-          fill={qualityColor}
-          style={{ transition: "fill 700ms ease" }}
-        />
-        <path
-          d="M22 100 Q 60 66 98 100"
-          stroke="currentColor"
-          strokeWidth="4"
-          opacity="0.2"
-          style={{
-            strokeDasharray: 140,
-            strokeDashoffset: 140 - (140 * p) / 100,
-            transition: "stroke-dashoffset 700ms ease",
-          }}
-        />
-      </svg>
-    ) : variant === "head" ? (
-      <svg
-        className={`w-24 h-24 ${strokeTone}`}
-        viewBox="0 0 120 120"
-        fill="none"
-      >
-        <line
-          x1="60"
-          y1="20"
-          x2="60"
-          y2="102"
-          stroke="currentColor"
-          strokeWidth="4"
-          opacity="0.22"
-        />
-        <circle
-          cx={60 + (24 * (100 - p)) / 100}
-          cy="40"
-          r="12"
-          stroke={qualityColor}
-          strokeWidth="5"
-          fill="none"
-          style={{ transition: "all 700ms ease" }}
-        />
-        <path
-          d="M54 62 Q 60 54 66 62 L66 96 L54 96 Z"
-          fill={qualityColor}
-          opacity="0.32"
-          style={{
-            transformOrigin: "60px 78px",
-            transform: `translateX(${(22 * (100 - p)) / 100}px)`,
-            transition: "transform 700ms ease, fill 700ms ease",
-          }}
-        />
-      </svg>
-    ) : (
-      <svg
-        className={`w-24 h-24 ${strokeTone}`}
-        viewBox="0 0 120 120"
-        fill="none"
-      >
-        <line
-          x1="20"
-          y1="84"
-          x2="100"
-          y2="84"
-          stroke="currentColor"
-          strokeWidth="4"
-          opacity="0.2"
-        />
-        <line
-          x1="26"
-          y1={64 + (20 * (100 - p)) / 100}
-          x2="94"
-          y2={64 - (20 * (100 - p)) / 100}
-          stroke={qualityColor}
-          strokeWidth="6"
-          strokeLinecap="round"
-          style={{ transition: "all 700ms ease" }}
-        />
-        <circle
-          cx="26"
-          cy={64 + (20 * (100 - p)) / 100}
-          r="5"
-          fill={qualityColor}
-          style={{ transition: "all 700ms ease" }}
-        />
-        <circle
-          cx="94"
-          cy={64 - (20 * (100 - p)) / 100}
-          r="5"
-          fill={qualityColor}
-          style={{ transition: "all 700ms ease" }}
-        />
-        <path
-          d="M24 98 H96"
-          stroke="currentColor"
-          strokeWidth="3"
-          opacity="0.2"
-          style={{
-            strokeDasharray: 72,
-            strokeDashoffset: 72 - (72 * p) / 100,
-            transition: "stroke-dashoffset 700ms ease",
-          }}
-        />
-      </svg>
-    );
+  void variant;
+  void rawValue;
+  void signedValue;
+  void threshold;
+  void _progress;
 
   return (
     <div className="bg-gradient-to-br from-white/10 to-transparent backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col gap-1 hover:bg-white/10 transition-all relative overflow-hidden group">
@@ -1020,9 +961,6 @@ function MetricCard({
           {value}
         </span>
         <span className="text-xs text-white/40">{unit}</span>
-      </div>
-      <div className="absolute -right-4 -bottom-6 opacity-30 group-hover:opacity-50 transition-opacity pointer-events-none">
-        {ornament}
       </div>
     </div>
   );
