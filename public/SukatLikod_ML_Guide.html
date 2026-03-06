@@ -1,0 +1,1380 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SukatLikod – ML Training Guide</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #0e0e12;
+        --paper: #f5f3ee;
+        --accent: #2a5cff;
+        --accent2: #ff5c2a;
+        --muted: #6b6b78;
+        --border: #d8d5ce;
+        --code-bg: #0e0e12;
+        --code-fg: #a8ffb0;
+        --step-line: #c5c0b5;
+        --proper: #1eb87a;
+        --warn: #e8a020;
+        --skip: #d03a2e;
+        --card: #ffffff;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--paper);
+        color: var(--ink);
+        font-family: "Lora", Georgia, serif;
+        font-size: 17px;
+        line-height: 1.75;
+        min-height: 100vh;
+      }
+
+      /* ── HEADER ── */
+      header {
+        background: var(--ink);
+        color: #fff;
+        padding: 64px 48px 52px;
+        position: relative;
+        overflow: hidden;
+      }
+      header::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          -45deg,
+          transparent,
+          transparent 28px,
+          rgba(255, 255, 255, 0.03) 28px,
+          rgba(255, 255, 255, 0.03) 29px
+        );
+      }
+      .header-badge {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 18px;
+        position: relative;
+      }
+      header h1 {
+        font-family: "Syne", sans-serif;
+        font-weight: 800;
+        font-size: clamp(36px, 5vw, 60px);
+        line-height: 1.05;
+        position: relative;
+      }
+      header h1 span {
+        color: var(--accent);
+      }
+      header p.lead {
+        font-family: "Lora", serif;
+        font-style: italic;
+        color: #a0a0b0;
+        margin-top: 18px;
+        font-size: 18px;
+        max-width: 560px;
+        position: relative;
+      }
+      .header-dots {
+        position: absolute;
+        right: 60px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 10px;
+        opacity: 0.15;
+      }
+      .header-dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #fff;
+        display: block;
+      }
+
+      /* ── LAYOUT ── */
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0 32px;
+      }
+
+      /* ── OVERVIEW PILLS ── */
+      .overview {
+        background: var(--card);
+        border-bottom: 2px solid var(--border);
+        padding: 28px 0;
+      }
+      .overview-inner {
+        display: flex;
+        gap: 0;
+        align-items: stretch;
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0 32px;
+      }
+      .ov-item {
+        flex: 1;
+        text-align: center;
+        padding: 12px 16px;
+        border-right: 1px solid var(--border);
+      }
+      .ov-item:last-child {
+        border-right: none;
+      }
+      .ov-num {
+        font-family: "Syne", sans-serif;
+        font-weight: 800;
+        font-size: 30px;
+        color: var(--accent);
+        line-height: 1;
+      }
+      .ov-label {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      /* ── SECTION HEADERS ── */
+      .section {
+        padding: 64px 0 40px;
+        border-bottom: 1px solid var(--border);
+      }
+      .section:last-of-type {
+        border-bottom: none;
+      }
+      .section-label {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 10px;
+      }
+      .section h2 {
+        font-family: "Syne", sans-serif;
+        font-weight: 700;
+        font-size: 28px;
+        line-height: 1.2;
+        margin-bottom: 20px;
+      }
+      .section p {
+        color: #333;
+        margin-bottom: 14px;
+      }
+
+      /* ── CALLOUT BOX ── */
+      .callout {
+        border-left: 4px solid var(--accent);
+        background: #eef2ff;
+        padding: 16px 20px;
+        border-radius: 0 8px 8px 0;
+        margin: 20px 0;
+        font-size: 15px;
+      }
+      .callout strong {
+        color: var(--accent);
+        font-family: "Syne", sans-serif;
+      }
+      .callout.warn {
+        border-color: var(--warn);
+        background: #fdf5e6;
+      }
+      .callout.warn strong {
+        color: var(--warn);
+      }
+
+      /* ── CODE BLOCK ── */
+      pre {
+        background: var(--code-bg);
+        color: var(--code-fg);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        line-height: 1.7;
+        padding: 22px 24px;
+        border-radius: 10px;
+        overflow-x: auto;
+        margin: 20px 0;
+      }
+      pre .comment {
+        color: #5a6a5c;
+      }
+      pre .cmd {
+        color: #fff;
+      }
+      pre .flag {
+        color: #ffd27a;
+      }
+      pre .path {
+        color: #7dd4fc;
+      }
+      pre .str {
+        color: #f9a8d4;
+      }
+      code {
+        font-family: "JetBrains Mono", monospace;
+        background: #e8e5de;
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-size: 14px;
+        color: #2a5cff;
+      }
+
+      /* ── FOLDER TREE ── */
+      .folder-tree {
+        background: var(--code-bg);
+        color: #e0e0e0;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        line-height: 2;
+        padding: 22px 24px;
+        border-radius: 10px;
+        margin: 20px 0;
+      }
+      .folder-tree .dir {
+        color: #7dd4fc;
+        font-weight: 500;
+      }
+      .folder-tree .file {
+        color: #a8ffb0;
+      }
+      .folder-tree .note {
+        color: #5a6a5c;
+      }
+
+      /* ── PIPELINE DIAGRAM ── */
+      .pipeline {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        margin: 32px 0;
+        flex-wrap: wrap;
+        row-gap: 16px;
+      }
+      .pipe-step {
+        background: var(--card);
+        border: 2px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+        text-align: center;
+        flex: 1;
+        min-width: 100px;
+        position: relative;
+      }
+      .pipe-step .pipe-icon {
+        font-size: 22px;
+        margin-bottom: 6px;
+      }
+      .pipe-step .pipe-label {
+        font-family: "Syne", sans-serif;
+        font-weight: 700;
+        font-size: 12px;
+        color: var(--ink);
+        line-height: 1.2;
+      }
+      .pipe-step .pipe-sub {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 9px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-top: 3px;
+      }
+      .pipe-arrow {
+        color: var(--accent);
+        font-size: 22px;
+        padding: 0 4px;
+        flex-shrink: 0;
+      }
+      .pipe-step.active {
+        border-color: var(--accent);
+        background: #eef2ff;
+      }
+
+      /* ── LABEL CARDS ── */
+      .label-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin: 24px 0;
+      }
+      .label-card {
+        border-radius: 12px;
+        padding: 20px;
+        border: 2px solid transparent;
+      }
+      .label-card.proper {
+        background: #e8faf3;
+        border-color: var(--proper);
+      }
+      .label-card.needs {
+        background: #fff5e6;
+        border-color: var(--warn);
+      }
+      .label-card.skip {
+        background: #fdecea;
+        border-color: var(--skip);
+      }
+      .label-card .lc-badge {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        font-weight: 500;
+        margin-bottom: 10px;
+      }
+      .label-card.proper .lc-badge {
+        color: var(--proper);
+      }
+      .label-card.needs .lc-badge {
+        color: var(--warn);
+      }
+      .label-card.skip .lc-badge {
+        color: var(--skip);
+      }
+      .label-card .lc-icon {
+        font-size: 28px;
+        margin-bottom: 8px;
+      }
+      .label-card ul {
+        list-style: none;
+        font-size: 14px;
+        color: #333;
+        line-height: 1.7;
+      }
+      .label-card ul li::before {
+        content: "– ";
+        color: var(--muted);
+      }
+
+      /* ── CYCLE DIAGRAM ── */
+      .cycle {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin: 28px 0;
+        counter-reset: cyc;
+      }
+      .cyc-step {
+        background: var(--card);
+        border: 1.5px solid var(--border);
+        border-radius: 12px;
+        padding: 16px 14px;
+        position: relative;
+        counter-increment: cyc;
+      }
+      .cyc-step::before {
+        content: counter(cyc);
+        position: absolute;
+        top: -12px;
+        left: 12px;
+        background: var(--accent);
+        color: #fff;
+        font-family: "Syne", sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .cyc-step .cs-icon {
+        font-size: 20px;
+        margin-bottom: 6px;
+      }
+      .cyc-step .cs-label {
+        font-family: "Syne", sans-serif;
+        font-weight: 700;
+        font-size: 13px;
+        line-height: 1.3;
+        margin-bottom: 4px;
+      }
+      .cyc-step .cs-desc {
+        font-size: 12px;
+        color: var(--muted);
+        font-family: "JetBrains Mono", monospace;
+        line-height: 1.5;
+      }
+
+      /* ── OUTPUT FILES ── */
+      .file-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin: 20px 0;
+      }
+      .file-card {
+        background: var(--card);
+        border: 1.5px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .file-card .fc-icon {
+        font-size: 26px;
+        flex-shrink: 0;
+      }
+      .file-card .fc-name {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .file-card .fc-desc {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 3px;
+        font-style: italic;
+      }
+
+      /* ── FEATURE TABLE ── */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        margin: 20px 0;
+        background: var(--card);
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1.5px solid var(--border);
+      }
+      th {
+        background: var(--ink);
+        color: #fff;
+        font-family: "Syne", sans-serif;
+        font-weight: 600;
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 12px 16px;
+        text-align: left;
+      }
+      td {
+        padding: 11px 16px;
+        border-top: 1px solid var(--border);
+        color: #333;
+        vertical-align: top;
+      }
+      tr:nth-child(even) td {
+        background: #faf9f6;
+      }
+      td:first-child {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        color: var(--accent);
+        white-space: nowrap;
+      }
+
+      /* ── POSTURE SVG VISUAL ── */
+      .posture-visual {
+        display: flex;
+        gap: 32px;
+        justify-content: center;
+        align-items: flex-end;
+        margin: 32px 0;
+        padding: 28px;
+        background: var(--card);
+        border: 1.5px solid var(--border);
+        border-radius: 14px;
+      }
+      .pv-figure {
+        text-align: center;
+      }
+      .pv-label {
+        font-family: "Syne", sans-serif;
+        font-size: 13px;
+        font-weight: 700;
+        margin-top: 10px;
+      }
+      .pv-label.good {
+        color: var(--proper);
+      }
+      .pv-label.bad {
+        color: var(--warn);
+      }
+
+      /* ── TAGS ── */
+      .tag {
+        display: inline-block;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        padding: 3px 9px;
+        border-radius: 4px;
+        margin: 2px;
+        background: #e8e5de;
+        color: var(--ink);
+      }
+
+      /* ── FOOTER ── */
+      footer {
+        background: var(--ink);
+        color: #5a5a6e;
+        padding: 32px 48px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      footer span {
+        color: var(--accent);
+      }
+
+      /* ── RESPONSIVE ── */
+      @media (max-width: 680px) {
+        .label-grid {
+          grid-template-columns: 1fr;
+        }
+        .cycle {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .file-grid {
+          grid-template-columns: 1fr;
+        }
+        .overview-inner {
+          flex-wrap: wrap;
+        }
+        .pipeline {
+          flex-direction: column;
+        }
+        .pipe-arrow {
+          transform: rotate(90deg);
+        }
+        .posture-visual {
+          flex-direction: column;
+          align-items: center;
+        }
+        header {
+          padding: 40px 24px;
+        }
+        .container {
+          padding: 0 20px;
+        }
+        .header-dots {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- HEADER -->
+    <header>
+      <div class="header-dots">
+        <!-- dot grid -->
+        <span></span><span></span><span></span><span></span><span></span
+        ><span></span> <span></span><span></span><span></span><span></span
+        ><span></span><span></span> <span></span><span></span><span></span
+        ><span></span><span></span><span></span> <span></span><span></span
+        ><span></span><span></span><span></span><span></span> <span></span
+        ><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span
+        ><span></span>
+      </div>
+      <div class="header-badge">SukatLikod · ML Training Guide</div>
+      <h1>From <span>Photos</span> to<br />Trained Model</h1>
+      <p class="lead">
+        A step-by-step visual guide for building and retraining a
+        posture-detection machine learning model.
+      </p>
+    </header>
+
+    <!-- OVERVIEW STRIP -->
+    <div class="overview">
+      <div class="overview-inner">
+        <div class="ov-item">
+          <div class="ov-num">4</div>
+          <div class="ov-label">Feature Inputs</div>
+        </div>
+        <div class="ov-item">
+          <div class="ov-num">3</div>
+          <div class="ov-label">Label Classes</div>
+        </div>
+        <div class="ov-item">
+          <div class="ov-num">7</div>
+          <div class="ov-label">Step Cycle</div>
+        </div>
+        <div class="ov-item">
+          <div class="ov-num">2 fps</div>
+          <div class="ov-label">Extract Rate</div>
+        </div>
+        <div class="ov-item">
+          <div class="ov-num">8000</div>
+          <div class="ov-label">API Port</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container">
+      <!-- ── SECTION 1: CONCEPT ── -->
+      <section class="section">
+        <div class="section-label">Section 01 — Core Concept</div>
+        <h2>How the Model Actually Works</h2>
+        <p>
+          The model does <em>not</em> process raw photos directly. Instead,
+          photos are used to extract numeric <strong>posture features</strong> —
+          measurements describing the person's position. Those numbers become
+          the training data.
+        </p>
+
+        <div class="callout">
+          <strong>Key Idea:</strong> A photo → keypoints → numeric features →
+          label. The model learns from the numbers, not the pixels.
+        </div>
+
+        <!-- Posture figures SVG -->
+        <div class="posture-visual">
+          <!-- Proper posture figure -->
+          <div class="pv-figure">
+            <svg
+              width="90"
+              height="180"
+              viewBox="0 0 90 180"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <!-- head -->
+              <circle
+                cx="45"
+                cy="20"
+                r="14"
+                fill="#1eb87a"
+                opacity=".15"
+                stroke="#1eb87a"
+                stroke-width="2"
+              />
+              <!-- spine straight -->
+              <line
+                x1="45"
+                y1="34"
+                x2="45"
+                y2="120"
+                stroke="#1eb87a"
+                stroke-width="3"
+                stroke-linecap="round"
+              />
+              <!-- shoulders level -->
+              <line
+                x1="20"
+                y1="55"
+                x2="70"
+                y2="55"
+                stroke="#1eb87a"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              />
+              <!-- arms -->
+              <line
+                x1="20"
+                y1="55"
+                x2="14"
+                y2="95"
+                stroke="#1eb87a"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <line
+                x1="70"
+                y1="55"
+                x2="76"
+                y2="95"
+                stroke="#1eb87a"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <!-- pelvis -->
+              <line
+                x1="30"
+                y1="120"
+                x2="60"
+                y2="120"
+                stroke="#1eb87a"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              />
+              <!-- legs -->
+              <line
+                x1="35"
+                y1="120"
+                x2="30"
+                y2="170"
+                stroke="#1eb87a"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <line
+                x1="55"
+                y1="120"
+                x2="60"
+                y2="170"
+                stroke="#1eb87a"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <!-- vertical guide -->
+              <line
+                x1="45"
+                y1="5"
+                x2="45"
+                y2="175"
+                stroke="#1eb87a"
+                stroke-width="1"
+                stroke-dasharray="4 3"
+                opacity=".3"
+              />
+            </svg>
+            <div class="pv-label good">✓ Proper</div>
+          </div>
+
+          <!-- vs label -->
+          <div
+            style="
+              font-family: &quot;Syne&quot;, sans-serif;
+              font-size: 22px;
+              font-weight: 800;
+              color: #c5c0b5;
+              padding-bottom: 40px;
+            "
+          >
+            vs
+          </div>
+
+          <!-- Needs correction figure -->
+          <div class="pv-figure">
+            <svg
+              width="90"
+              height="180"
+              viewBox="0 0 90 180"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <!-- head (forward) -->
+              <circle
+                cx="55"
+                cy="22"
+                r="14"
+                fill="#e8a020"
+                opacity=".15"
+                stroke="#e8a020"
+                stroke-width="2"
+              />
+              <!-- slouched spine curve -->
+              <path
+                d="M45 36 C40 60 35 80 38 120"
+                stroke="#e8a020"
+                stroke-width="3"
+                stroke-linecap="round"
+                fill="none"
+              />
+              <!-- uneven shoulders -->
+              <line
+                x1="20"
+                y1="58"
+                x2="66"
+                y2="52"
+                stroke="#e8a020"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              />
+              <!-- arms -->
+              <line
+                x1="20"
+                y1="58"
+                x2="16"
+                y2="98"
+                stroke="#e8a020"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <line
+                x1="66"
+                y1="52"
+                x2="72"
+                y2="92"
+                stroke="#e8a020"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <!-- pelvis -->
+              <line
+                x1="28"
+                y1="120"
+                x2="58"
+                y2="120"
+                stroke="#e8a020"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              />
+              <!-- legs -->
+              <line
+                x1="33"
+                y1="120"
+                x2="28"
+                y2="170"
+                stroke="#e8a020"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <line
+                x1="53"
+                y1="120"
+                x2="58"
+                y2="170"
+                stroke="#e8a020"
+                stroke-width="2"
+                stroke-linecap="round"
+                opacity=".7"
+              />
+              <!-- vertical guide (offset) -->
+              <line
+                x1="45"
+                y1="5"
+                x2="45"
+                y2="175"
+                stroke="#e8a020"
+                stroke-width="1"
+                stroke-dasharray="4 3"
+                opacity=".3"
+              />
+              <!-- forward head arrow -->
+              <path
+                d="M44 22 L52 22"
+                stroke="#e8a020"
+                stroke-width="1.5"
+                stroke-dasharray="3 2"
+                opacity=".6"
+              />
+            </svg>
+            <div class="pv-label bad">⚠ Needs Correction</div>
+          </div>
+        </div>
+
+        <!-- Feature table -->
+        <p>The 4 numeric features extracted from each frame:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>What it measures</th>
+              <th>Unit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>trunk_angle</td>
+              <td>How far the torso leans forward from vertical</td>
+              <td>degrees</td>
+            </tr>
+            <tr>
+              <td>head_forward</td>
+              <td>How far the head protrudes ahead of the spine baseline</td>
+              <td>pixels / ratio</td>
+            </tr>
+            <tr>
+              <td>shoulder_tilt</td>
+              <td>
+                Height difference between left and right shoulder keypoints
+              </td>
+              <td>degrees</td>
+            </tr>
+            <tr>
+              <td>trunk_variance</td>
+              <td>Variability of trunk position over recent frames</td>
+              <td>float</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── SECTION 2: PIPELINE OVERVIEW ── -->
+      <section class="section">
+        <div class="section-label">Section 02 — Full Pipeline</div>
+        <h2>End-to-End Flow at a Glance</h2>
+        <p>
+          Here's how each piece connects — from raw video to a live prediction
+          in the app.
+        </p>
+
+        <div class="pipeline">
+          <div class="pipe-step active">
+            <div class="pipe-icon">🎥</div>
+            <div class="pipe-label">Raw Videos</div>
+            <div class="pipe-sub">10–30 sec clips</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-icon">🖼️</div>
+            <div class="pipe-label">Extract Frames</div>
+            <div class="pipe-sub">ffmpeg @ 2 fps</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-icon">🏷️</div>
+            <div class="pipe-label">Label Frames</div>
+            <div class="pipe-sub">proper / needs / skip</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-icon">📊</div>
+            <div class="pipe-label">Build CSV</div>
+            <div class="pipe-sub">posture_dataset.csv</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-icon">🧠</div>
+            <div class="pipe-label">Train Model</div>
+            <div class="pipe-sub">train.py</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-icon">🚀</div>
+            <div class="pipe-label">Run API</div>
+            <div class="pipe-sub">uvicorn :8000</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-icon">📱</div>
+            <div class="pipe-label">React App</div>
+            <div class="pipe-sub">/predict</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── SECTION 3: FOLDER SETUP ── -->
+      <section class="section">
+        <div class="section-label">Section 03 — Folder Setup</div>
+        <h2>Project Folder Structure</h2>
+        <p>
+          Create these folders in the project root before you start. The
+          structure keeps raw material, labeled data, and model files clearly
+          separated.
+        </p>
+
+        <div class="folder-tree">
+          <span class="dir">project-root/</span><br />
+          ├── <span class="dir">dataset/</span><br />
+          │ ├── <span class="dir">raw_videos/</span>
+          <span class="note">← your original video clips go here</span><br />
+          │ ├── <span class="dir">frames/</span>
+          <span class="note">← extracted jpg frames from ffmpeg</span><br />
+          │ └── <span class="dir">labeled/</span><br />
+          │ ├── <span class="dir">proper/</span>
+          <span class="note">← frames with good posture</span><br />
+          │ ├── <span class="dir">needs_correction/</span>
+          <span class="note">← frames with poor posture</span><br />
+          │ └── <span class="dir">skip/</span>
+          <span class="note">← blurry, occluded, or wrong angle</span><br />
+          ├── <span class="dir">backend/</span><br />
+          │ ├── <span class="dir">data/</span><br />
+          │ │ ├── <span class="file">posture_dataset.csv</span>
+          <span class="note">← your training rows</span><br />
+          │ │ └── <span class="file">posture_dataset.sample.csv</span><br />
+          │ ├── <span class="dir">model/</span><br />
+          │ │ ├── <span class="file">posture_model.joblib</span>
+          <span class="note">← trained model (auto-generated)</span><br />
+          │ │ └── <span class="file">model_meta.json</span><br />
+          │ ├── <span class="file">train.py</span><br />
+          │ ├── <span class="file">api.py</span><br />
+          │ └── <span class="file">requirements.txt</span><br />
+          └── <span class="file">.env</span>
+          <span class="note">← VITE_ML_API_URL</span>
+        </div>
+      </section>
+
+      <!-- ── SECTION 4: LABELING ── -->
+      <section class="section">
+        <div class="section-label">Section 04 — Labeling Rules</div>
+        <h2>Labeling Your Frames</h2>
+        <p>
+          Define your labeling rules <em>before</em> you start and keep them
+          consistent throughout. Moving a frame into the right folder is all you
+          need to do — no special tools required.
+        </p>
+
+        <div class="label-grid">
+          <div class="label-card proper">
+            <div class="lc-icon">✅</div>
+            <div class="lc-badge">proper/</div>
+            <ul>
+              <li>Neutral, upright posture</li>
+              <li>Head not significantly forward</li>
+              <li>Shoulders roughly level</li>
+              <li>Full body visible</li>
+            </ul>
+          </div>
+          <div class="label-card needs">
+            <div class="lc-icon">⚠️</div>
+            <div class="lc-badge">needs_correction/</div>
+            <ul>
+              <li>Visible slouch or hunch</li>
+              <li>Clear forward head posture</li>
+              <li>Noticeably uneven shoulders</li>
+              <li>Body clearly visible</li>
+            </ul>
+          </div>
+          <div class="label-card skip">
+            <div class="lc-icon">🚫</div>
+            <div class="lc-badge">skip/</div>
+            <ul>
+              <li>Blurry or out of focus</li>
+              <li>Body partially occluded</li>
+              <li>Wrong camera angle</li>
+              <li>Any uncertainty</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <strong>Tip:</strong> When in doubt, put the frame in
+          <code>skip/</code>. Clean data matters more than dataset size. An
+          uncertain label is worse than no label.
+        </div>
+      </section>
+
+      <!-- ── SECTION 5: DATA COLLECTION ── -->
+      <section class="section">
+        <div class="section-label">Section 05 — Data Collection</div>
+        <h2>Collecting and Extracting Video Data</h2>
+        <p>
+          Aim for variety — different people, lighting conditions, and camera
+          distances all help the model generalize better.
+        </p>
+
+        <div class="callout">
+          <strong>Recommended starting target:</strong> 20–40 clips, roughly
+          balanced between <em>proper</em> and
+          <em>needs_correction</em> classes.
+        </div>
+
+        <p>
+          Once you have raw videos in <code>dataset/raw_videos/</code>, extract
+          frames using <strong>ffmpeg</strong> at 2 frames per second. This
+          keeps adjacent frames different enough to avoid near-duplicate
+          training samples.
+        </p>
+
+        <pre><span class="comment"># Extract frames from a clip at 2 fps
+# Replace clip01 with your actual filename</span>
+<span class="cmd">ffmpeg</span> <span class="flag">-i</span> <span class="path">dataset/raw_videos/clip01.mp4</span> <span class="flag">-vf</span> <span class="str">fps=2</span> <span class="path">dataset/frames/clip01_%04d.jpg</span>
+
+<span class="comment"># Repeat for each video clip</span>
+<span class="cmd">ffmpeg</span> <span class="flag">-i</span> <span class="path">dataset/raw_videos/clip02.mp4</span> <span class="flag">-vf</span> <span class="str">fps=2</span> <span class="path">dataset/frames/clip02_%04d.jpg</span></pre>
+
+        <p>
+          After extraction, open the <code>dataset/frames/</code> folder and
+          manually move each file into <code>proper/</code>,
+          <code>needs_correction/</code>, or <code>skip/</code> according to
+          your labeling rules above.
+        </p>
+      </section>
+
+      <!-- ── SECTION 6: BUILDING CSV ── -->
+      <section class="section">
+        <div class="section-label">Section 06 — Dataset CSV</div>
+        <h2>Building <code>posture_dataset.csv</code></h2>
+        <p>
+          Create the file at <code>backend/data/posture_dataset.csv</code>. Each
+          row represents one labeled frame with its 4 computed feature values.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>trunk_angle</th>
+              <th>head_forward</th>
+              <th>shoulder_tilt</th>
+              <th>trunk_variance</th>
+              <th>label</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>3.2</td>
+              <td>0.05</td>
+              <td>1.1</td>
+              <td>0.008</td>
+              <td style="color: var(--proper); font-weight: 600">proper</td>
+            </tr>
+            <tr>
+              <td>18.7</td>
+              <td>0.31</td>
+              <td>6.4</td>
+              <td>0.045</td>
+              <td style="color: var(--warn); font-weight: 600">
+                needs_correction
+              </td>
+            </tr>
+            <tr>
+              <td>22.1</td>
+              <td>0.27</td>
+              <td>8.0</td>
+              <td>0.062</td>
+              <td style="color: var(--warn); font-weight: 600">
+                needs_correction
+              </td>
+            </tr>
+            <tr>
+              <td>4.5</td>
+              <td>0.07</td>
+              <td>0.9</td>
+              <td>0.010</td>
+              <td style="color: var(--proper); font-weight: 600">proper</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          You can fill values manually if you have measurements, or use a
+          feature-extraction script to compute them from your labeled frames
+          automatically. See
+          <code>backend/data/posture_dataset.sample.csv</code> for a complete
+          reference.
+        </p>
+      </section>
+
+      <!-- ── SECTION 7: TRAINING ── -->
+      <section class="section">
+        <div class="section-label">Section 07 — Training the Model</div>
+        <h2>First-Time Setup &amp; Training</h2>
+        <p>
+          Run these commands <strong>once</strong> to set up your Python
+          environment and train the initial model.
+        </p>
+
+        <pre><span class="comment"># 1. Create a virtual environment</span>
+<span class="cmd">python</span> <span class="flag">-m</span> venv .venv
+
+<span class="comment"># 2. Activate it (Windows)</span>
+<span class="path">.venv\Scripts\activate</span>
+
+<span class="comment"># 3. Install dependencies</span>
+<span class="cmd">pip</span> install <span class="flag">-r</span> <span class="path">backend/requirements.txt</span>
+
+<span class="comment"># 4. Train the model</span>
+<span class="cmd">python</span> <span class="path">backend/train.py</span> <span class="flag">--data</span> <span class="path">backend/data/posture_dataset.csv</span></pre>
+
+        <p>
+          After training, two output files will be created in
+          <code>backend/model/</code>:
+        </p>
+
+        <div class="file-grid">
+          <div class="file-card">
+            <div class="fc-icon">🧠</div>
+            <div>
+              <div class="fc-name">posture_model.joblib</div>
+              <div class="fc-desc">
+                The serialized trained model used for live predictions
+              </div>
+            </div>
+          </div>
+          <div class="file-card">
+            <div class="fc-icon">📋</div>
+            <div>
+              <div class="fc-name">model_meta.json</div>
+              <div class="fc-desc">
+                Metadata: feature names, class labels, training timestamp
+              </div>
+            </div>
+          </div>
+        </div>
+
+        
+        <p>Recommended retrain command (works even without activating venv):</p>
+
+        <pre><span class="cmd">.\.venv\Scripts\python.exe</span> <span class="path">backend/train.py</span> <span class="flag">--data</span> <span class="path">backend/data/posture_dataset.csv</span></pre>
+      </section>
+
+      <!-- ── SECTION 8: API + FRONTEND ── -->
+      <section class="section">
+        <div class="section-label">
+          Section 08 — Running the API &amp; Frontend
+        </div>
+        <h2>Connecting the Model to the App</h2>
+        <p>
+          Start the inference API, then connect the React frontend to it via
+          environment variable.
+        </p>
+
+        <pre><span class="comment"># Start the FastAPI inference server</span>
+<span class="cmd">uvicorn</span> backend.api:app <span class="flag">--reload</span> <span class="flag">--host</span> 127.0.0.1 <span class="flag">--port</span> 8000
+
+<span class="comment"># Health check endpoint (open in browser)</span>
+<span class="str">http://127.0.0.1:8000/health</span></pre>
+
+        <p>Create a <code>.env</code> file in the project root:</p>
+
+        <pre><span class="comment"># .env</span>
+<span class="str">VITE_ML_API_URL</span>=<span class="path">http://127.0.0.1:8000</span></pre>
+
+        <p>Then run the frontend:</p>
+
+        <pre><span class="cmd">npm</span> run dev</pre>
+
+        <p>
+          The app will automatically call the <code>/predict</code> endpoint
+          with extracted posture features and display the result.
+        </p>
+        <div class="callout">
+          <strong>Production note:</strong> In Vercel, set
+          <code>VITE_ML_API_URL</code> to your Render backend URL (example:
+          <code>https://sukatlikod.onrender.com</code>).
+        </div>      </section>
+
+      <!-- ── SECTION 9: RETRAINING CYCLE ── -->
+      <section class="section">
+        <div class="section-label">Section 09 — Retraining Workflow</div>
+        <h2>The 7-Step Improvement Cycle</h2>
+        <p>
+          Retraining is expected and should happen repeatedly as your dataset
+          grows and improves. Follow this cycle to continuously improve model
+          accuracy.
+        </p>
+
+        <div class="cycle">
+          <div class="cyc-step">
+            <div class="cs-icon">🎥</div>
+            <div class="cs-label">Gather Videos</div>
+            <div class="cs-desc">More clips, new people, varied conditions</div>
+          </div>
+          <div class="cyc-step">
+            <div class="cs-icon">🖼️</div>
+            <div class="cs-label">Extract Frames</div>
+            <div class="cs-desc">ffmpeg at 2 fps per clip</div>
+          </div>
+          <div class="cyc-step">
+            <div class="cs-icon">🏷️</div>
+            <div class="cs-label">Label Frames</div>
+            <div class="cs-desc">Move into proper / needs / skip</div>
+          </div>
+          <div class="cyc-step">
+            <div class="cs-icon">📊</div>
+            <div class="cs-label">Update CSV</div>
+            <div class="cs-desc">Add new rows to posture_dataset.csv</div>
+          </div>
+          <div class="cyc-step">
+            <div class="cs-icon">🧠</div>
+            <div class="cs-label">Retrain</div>
+            <div class="cs-desc">python backend/train.py</div>
+          </div>
+          <div class="cyc-step">
+            <div class="cs-icon">🚀</div>
+            <div class="cs-label">Run &amp; Test</div>
+            <div class="cs-desc">Start API, open app, check predictions</div>
+          </div>
+          <div class="cyc-step">
+            <div class="cs-icon">🔍</div>
+            <div class="cs-label">Review Errors</div>
+            <div class="cs-desc">Fix wrong labels, improve data</div>
+          </div>
+        </div>
+
+        <p>For most retraining sessions, the only command you need is:</p>
+
+        <pre><span class="comment"># Activate venv (if not already active), then retrain</span>
+<span class="path">.venv\Scripts\activate</span>
+<span class="cmd">python</span> <span class="path">backend/train.py</span> <span class="flag">--data</span> <span class="path">backend/data/posture_dataset.csv</span></pre>
+      </section>
+
+
+      <!-- ── SECTION 10: RENDER + VERCEL ── -->
+      <section class="section">
+        <div class="section-label">Section 10 — Render + Vercel Deployment</div>
+        <h2>How to Run the System Fully Online</h2>
+        <p>
+          End users only need a browser. Python is required on the backend
+          server, not on every client computer.
+        </p>
+
+        <p>Render Web Service configuration:</p>
+        <pre><span class="str">Language</span>: Python
+<span class="str">Root Directory</span>: (leave blank)
+<span class="str">Build Command</span>: pip install -r backend/requirements.txt
+<span class="str">Start Command</span>: uvicorn backend.api:app --host 0.0.0.0 --port $PORT</pre>
+
+        <p>Before deploying backend, make sure these files exist in GitHub:</p>
+        <pre><span class="path">backend/api.py</span>
+<span class="path">backend/requirements.txt</span>
+<span class="path">backend/model/posture_model.joblib</span>
+<span class="path">backend/model/model_meta.json</span></pre>
+
+        <p>Backend health check:</p>
+        <pre><span class="str">https://sukatlikod.onrender.com/health</span></pre>
+
+        <p>Frontend env in Vercel:</p>
+        <pre><span class="str">VITE_ML_API_URL=https://sukatlikod.onrender.com</span></pre>
+
+        <div class="callout warn">
+          <strong>Render Free Plan note:</strong> The service sleeps on
+          inactivity. First request after idle can take longer (cold start,
+          often up to around 50+ seconds). This is expected behavior.
+        </div>
+      </section>
+      <!-- ── SECTION 11: CODEX TIPS ── -->
+      <section class="section">
+        <div class="section-label">Section 11 — Automation Tips</div>
+        <h2>Using Codex to Speed Things Up</h2>
+        <p>
+          Codex can automate the repetitive parts of this pipeline. Ask it to do
+          one clear task at a time, then verify the output before moving on.
+        </p>
+
+        <p>Useful tasks to delegate:</p>
+
+        <span class="tag"
+          >Generate feature-extraction script from labeled frames</span
+        >
+        <span class="tag">Create a labeling helper utility</span>
+        <span class="tag">Validate class balance in posture_dataset.csv</span>
+        <span class="tag">Summarize training metrics after each run</span>
+        <span class="tag">Write a batch frame-extraction shell script</span>
+        <span class="tag">Auto-split dataset into train/validation sets</span>
+
+        <div class="callout" style="margin-top: 24px">
+          <strong>Best practice:</strong> Give Codex one well-defined task per
+          prompt. Verify each output before moving to the next step — chaining
+          unverified scripts can corrupt your dataset.
+        </div>
+      </section>
+    </div>
+    <!-- /container -->
+
+    <!-- FOOTER -->
+    <footer>
+      <span>SukatLikod</span> — ML Training Guide · v1.0
+      <div style="color: #3a3a4e">
+        posture_model.joblib · FastAPI · React · MediaPipe
+      </div>
+    </footer>
+  </body>
+</html>
+

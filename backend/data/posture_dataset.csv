@@ -1,0 +1,11 @@
+trunk_angle,head_forward,shoulder_tilt,trunk_variance,label
+6.8,0.03,0.01,0.4,proper
+8.9,0.04,0.02,0.6,proper
+11.2,0.05,0.02,0.8,proper
+13.6,0.07,0.03,1.0,proper
+15.1,0.08,0.03,1.2,proper
+17.4,0.10,0.04,1.6,needs_correction
+19.8,0.12,0.05,1.9,needs_correction
+22.1,0.14,0.06,2.3,needs_correction
+25.7,0.17,0.08,2.8,needs_correction
+28.9,0.19,0.09,3.3,needs_correction
