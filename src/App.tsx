@@ -27,6 +27,10 @@ import {
 
 const IDX = {
   NOSE: 0,
+  L_EYE: 2,
+  R_EYE: 5,
+  L_EAR: 7,
+  R_EAR: 8,
   L_SHOULDER: 11,
   R_SHOULDER: 12,
   L_HIP: 23,
@@ -36,6 +40,12 @@ const IDX = {
 type Pill = "idle" | "loading" | "detecting" | "good" | "fix" | "error";
 type Point3 = { x: number; y: number; z: number };
 type FeedbackType = "info" | "warning" | "critical" | "success";
+type OrientationKind =
+  | "front"
+  | "back"
+  | "side_left"
+  | "side_right"
+  | "unknown";
 
 type FeedbackItem = {
   id: number;
@@ -54,6 +64,11 @@ type Sensitivity = {
 };
 
 const WINDOW = 30;
+const DEFAULT_SENSITIVITY: Sensitivity = {
+  trunkAngle: 18,
+  headDistance: 0.08,
+  shoulderTilt: 0.05,
+};
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
@@ -113,6 +128,45 @@ function metricQuality(value: number, threshold: number) {
   return Math.round(clamp(100 - (ratio - 1) * 70, 0, 100));
 }
 
+function detectOrientation(
+  world: { x: number; y: number; z: number }[],
+  norm?: { x: number; y: number; z: number; visibility?: number }[],
+): { kind: OrientationKind; label: string } {
+  const lsW = world[IDX.L_SHOULDER];
+  const rsW = world[IDX.R_SHOULDER];
+  const lsN = norm?.[IDX.L_SHOULDER];
+  const rsN = norm?.[IDX.R_SHOULDER];
+  if (!lsW || !rsW || !lsN || !rsN) return { kind: "unknown", label: "Unknown" };
+
+  const shoulderDepthDiff = Math.abs(lsW.z - rsW.z);
+  const shoulderWidth2D = Math.abs(lsN.x - rsN.x);
+  const sideLike = shoulderDepthDiff > 0.11 || shoulderWidth2D < 0.16;
+
+  if (sideLike) {
+    const leftCloser = lsW.z < rsW.z;
+    return leftCloser
+      ? { kind: "side_left", label: "Side (Left)" }
+      : { kind: "side_right", label: "Side (Right)" };
+  }
+
+  const facePoints = [
+    norm?.[IDX.NOSE],
+    norm?.[IDX.L_EYE],
+    norm?.[IDX.R_EYE],
+    norm?.[IDX.L_EAR],
+    norm?.[IDX.R_EAR],
+  ].filter(Boolean) as { visibility?: number }[];
+
+  const faceVis =
+    facePoints.length > 0
+      ? facePoints.reduce((s, p) => s + (p.visibility ?? 0), 0) /
+        facePoints.length
+      : 0;
+
+  if (faceVis < 0.35) return { kind: "back", label: "Back" };
+  return { kind: "front", label: "Front" };
+}
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -155,11 +209,10 @@ export default function App() {
     shoulderTilt: 0,
   });
 
-  const [sensitivity, setSensitivity] = useState<Sensitivity>({
-    trunkAngle: 18,
-    headDistance: 0.08,
-    shoulderTilt: 0.05,
-  });
+  const [sensitivity, setSensitivity] = useState<Sensitivity>(
+    DEFAULT_SENSITIVITY,
+  );
+  const [orientation, setOrientation] = useState("Unknown");
 
   const modelPath = useMemo(() => "/models/pose_landmarker_lite.task", []);
 
@@ -192,6 +245,7 @@ export default function App() {
     setScore(0);
     setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
     setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
+    setOrientation("Unknown");
     resetBuffers();
   }, [resetBuffers]);
 
@@ -344,6 +398,22 @@ export default function App() {
       const lh = world[IDX.L_HIP];
       const rh = world[IDX.R_HIP];
       if (!nose || !ls || !rs || !lh || !rh) return;
+
+      const orient = detectOrientation(world as Point3[], result.landmarks?.[0]);
+      setOrientation(orient.label);
+
+      if (orient.kind !== "front") {
+        setPill("detecting");
+        setScore(0);
+        setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
+        setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
+        setFeedback(
+          orient.kind === "back"
+            ? "Back view detected. Face the camera for accurate tracking."
+            : "Side view detected. Face the camera for accurate tracking.",
+        );
+        return;
+      }
 
       const midShoulder: Point3 = {
         x: (ls.x + rs.x) / 2,
@@ -666,10 +736,13 @@ export default function App() {
                 <div className="px-5 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Bell size={16} className="text-white/90" />
-                    <h3 className="font-bold text-sm text-white uppercase tracking-wider">
-                      Session Log
-                    </h3>
-                  </div>
+                  <h3 className="font-bold text-sm text-white uppercase tracking-wider">
+                    Session Log
+                  </h3>
+                  <span className="text-[10px] uppercase tracking-wider text-white/50">
+                    {orientation}
+                  </span>
+                </div>
                   <button
                     onClick={() => setShowSettings((v) => !v)}
                     className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white  hover:text-black"
@@ -808,7 +881,16 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="mt-auto pt-8">
+                <div className="mt-6">
+                  <button
+                    onClick={() => setSensitivity(DEFAULT_SENSITIVITY)}
+                    className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white text-sm font-semibold py-2.5 transition-colors"
+                  >
+                    Reset to Standard
+                  </button>
+                </div>
+
+                <div className="mt-auto pt-6">
                   <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
                     <p className="text-[10px] leading-relaxed text-white/40 italic">
                       Note: Higher sensitivity values increase the threshold for
