@@ -195,6 +195,98 @@
     <main
       class="max-w-4xl mx-auto px-6 lg:px-8 py-16 w-full space-y-24 flex-grow"
     >
+      <!-- PROJECT STATUS -->
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Project Status
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          What Is Already Done vs What Is Left
+        </h2>
+        <p class="text-lg">
+          This status section reflects your current setup progress for local and
+          production deployment.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 my-8">
+          <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <i data-lucide="circle-check-big" class="w-5 h-5 text-emerald-600"></i>
+              <h3 class="font-syne text-xl font-bold text-emerald-800">
+                Completed
+              </h3>
+            </div>
+            <ul class="space-y-2 text-sm text-emerald-900">
+              <li class="flex gap-2">
+                <i data-lucide="check" class="w-4 h-4 mt-0.5 text-emerald-700"></i>
+                Frontend UI is connected to ML API using
+                <code>VITE_ML_API_URL</code>.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="check" class="w-4 h-4 mt-0.5 text-emerald-700"></i>
+                Local Python environment and dependencies are installed.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="check" class="w-4 h-4 mt-0.5 text-emerald-700"></i>
+                Render backend is deployed and service is live.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="check" class="w-4 h-4 mt-0.5 text-emerald-700"></i>
+                Vercel environment variable is configured for production API URL.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="check" class="w-4 h-4 mt-0.5 text-emerald-700"></i>
+                Guide and workflow documentation are in place.
+              </li>
+            </ul>
+          </div>
+
+          <div class="bg-amber-50 border border-amber-200 rounded-2xl p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <i data-lucide="list-todo" class="w-5 h-5 text-amber-700"></i>
+              <h3 class="font-syne text-xl font-bold text-amber-900">
+                Remaining Work
+              </h3>
+            </div>
+            <ul class="space-y-2 text-sm text-amber-900">
+              <li class="flex gap-2">
+                <i data-lucide="chevron-right" class="w-4 h-4 mt-0.5 text-amber-700"></i>
+                Collect more labeled data (frames/videos) with balanced classes.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="chevron-right" class="w-4 h-4 mt-0.5 text-amber-700"></i>
+                Add or refine rows in <code>backend/data/posture_dataset.csv</code>.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="chevron-right" class="w-4 h-4 mt-0.5 text-amber-700"></i>
+                Retrain model after each significant dataset update.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="chevron-right" class="w-4 h-4 mt-0.5 text-amber-700"></i>
+                Redeploy backend after retraining so production uses latest model.
+              </li>
+              <li class="flex gap-2">
+                <i data-lucide="chevron-right" class="w-4 h-4 mt-0.5 text-amber-700"></i>
+                Run real-session validation and improve labels/features iteratively.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div
+          class="bg-slate-50 border border-slate-200 p-5 rounded-xl my-6 flex gap-4 items-start"
+        >
+          <i data-lucide="terminal" class="w-5 h-5 text-slate-700 mt-0.5"></i>
+          <p class="m-0 text-slate-700 text-sm md:text-base">
+            <strong class="font-syne text-slate-900 font-bold block mb-1"
+              >Retrain Command (Repeatable)</strong
+            >
+            <code>.\.venv\Scripts\python.exe backend/train.py --data backend/data/posture_dataset.csv</code>
+          </p>
+        </div>
+      </section>
       <!-- ── SECTION 1: CONCEPT ── -->
       <section class="scroll-mt-8">
         <div
