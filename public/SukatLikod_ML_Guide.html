@@ -287,6 +287,84 @@
           </p>
         </div>
       </section>
+      <!-- SYSTEM ARCHITECTURE -->
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> System Overview
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Architecture and Data Flow
+        </h2>
+        <p class="text-lg">
+          The project has two major layers: a React frontend for capture and UI,
+          and a Python backend for machine learning inference.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 my-8">
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+            <div class="flex items-center gap-2 mb-3">
+              <i data-lucide="monitor" class="w-5 h-5 text-brand"></i>
+              <h3 class="font-syne text-xl font-bold text-slate-900">Frontend Layer</h3>
+            </div>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Captures webcam frames in real-time</li>
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Runs MediaPipe pose tracking in-browser</li>
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Computes posture features from keypoints</li>
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Displays score, logs, and correction feedback</li>
+            </ul>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+            <div class="flex items-center gap-2 mb-3">
+              <i data-lucide="server" class="w-5 h-5 text-brand"></i>
+              <h3 class="font-syne text-xl font-bold text-slate-900">Backend Layer</h3>
+            </div>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Receives numeric posture features via API</li>
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Loads trained model artifact (.joblib)</li>
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Predicts class and confidence</li>
+              <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 mt-0.5 text-slate-500"></i>Returns label + guidance through /predict</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-2xl p-6 my-8">
+          <h3 class="font-syne text-xl font-bold text-slate-900 mb-4">Runtime Flow</h3>
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-3 text-center">
+            <div class="bg-white border border-slate-200 rounded-xl p-3">
+              <i data-lucide="camera" class="w-5 h-5 mx-auto mb-2 text-brand"></i>
+              <p class="m-0 text-xs font-mono text-slate-600">1. Capture Frame</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-3">
+              <i data-lucide="bones" class="w-5 h-5 mx-auto mb-2 text-brand"></i>
+              <p class="m-0 text-xs font-mono text-slate-600">2. Extract Keypoints</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-3">
+              <i data-lucide="calculator" class="w-5 h-5 mx-auto mb-2 text-brand"></i>
+              <p class="m-0 text-xs font-mono text-slate-600">3. Build Features</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-3">
+              <i data-lucide="brain" class="w-5 h-5 mx-auto mb-2 text-brand"></i>
+              <p class="m-0 text-xs font-mono text-slate-600">4. ML Prediction</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-3">
+              <i data-lucide="message-square-text" class="w-5 h-5 mx-auto mb-2 text-brand"></i>
+              <p class="m-0 text-xs font-mono text-slate-600">5. UI Feedback</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-blue-50 border-l-4 border-brand p-5 rounded-r-xl my-6 flex gap-4 items-start">
+          <i data-lucide="info" class="w-5 h-5 text-brand mt-0.5"></i>
+          <p class="m-0 text-slate-700 text-sm md:text-base">
+            <strong class="font-syne text-brand font-bold block mb-1">Crucial Understanding</strong>
+            The model is trained from <code>features + labels</code>, not from raw images alone.
+            Better labels and more balanced data directly improve prediction quality.
+          </p>
+        </div>
+      </section>
       <!-- ── SECTION 1: CONCEPT ── -->
       <section class="scroll-mt-8">
         <div
