@@ -4,1076 +4,857 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SukatLikod – ML Training Guide</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <style>
-      :root {
-        --ink: #0e0e12;
-        --paper: #f5f3ee;
-        --accent: #2a5cff;
-        --accent2: #ff5c2a;
-        --muted: #6b6b78;
-        --border: #d8d5ce;
-        --code-bg: #0e0e12;
-        --code-fg: #a8ffb0;
-        --step-line: #c5c0b5;
-        --proper: #1eb87a;
-        --warn: #e8a020;
-        --skip: #d03a2e;
-        --card: #ffffff;
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Inter", "sans-serif"],
+              syne: ["Syne", "sans-serif"],
+              mono: ["JetBrains Mono", "monospace"],
+            },
+            colors: {
+              brand: "#2a5cff",
+              brandLight: "#eef2ff",
+              proper: "#1eb87a",
+              properLight: "#e8faf3",
+              warn: "#e8a020",
+              warnLight: "#fff5e6",
+              skip: "#d03a2e",
+              skipLight: "#fdecea",
+              dark: "#0e0e12",
+              paper: "#f8fafc",
+            },
+          },
+        },
+      };
+    </script>
+    <style type="text/tailwindcss">
+      @layer utilities {
+        .bg-grid-pattern {
+          background-image:
+            linear-gradient(
+              to right,
+              rgba(255, 255, 255, 0.05) 1px,
+              transparent 1px
+            ),
+            linear-gradient(
+              to bottom,
+              rgba(255, 255, 255, 0.05) 1px,
+              transparent 1px
+            );
+          background-size: 32px 32px;
+        }
       }
 
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
+      /* Syntax Highlighting */
+      .code-block {
+        @apply bg-[#0e0e12] text-[#e0e0e0] font-mono text-sm leading-relaxed p-6 rounded-2xl overflow-x-auto shadow-2xl ring-1 ring-white/10 my-8;
+      }
+      .code-block .comment {
+        @apply text-slate-500 italic;
+      }
+      .code-block .cmd {
+        @apply text-emerald-400 font-medium;
+      }
+      .code-block .flag {
+        @apply text-amber-300;
+      }
+      .code-block .path {
+        @apply text-sky-300;
+      }
+      .code-block .str {
+        @apply text-pink-400;
       }
 
-      body {
-        background: var(--paper);
-        color: var(--ink);
-        font-family: "Lora", Georgia, serif;
-        font-size: 17px;
-        line-height: 1.75;
-        min-height: 100vh;
-      }
-
-      /* ── HEADER ── */
-      header {
-        background: var(--ink);
-        color: #fff;
-        padding: 64px 48px 52px;
-        position: relative;
-        overflow: hidden;
-      }
-      header::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: repeating-linear-gradient(
-          -45deg,
-          transparent,
-          transparent 28px,
-          rgba(255, 255, 255, 0.03) 28px,
-          rgba(255, 255, 255, 0.03) 29px
-        );
-      }
-      .header-badge {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 11px;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: var(--accent);
-        margin-bottom: 18px;
-        position: relative;
-      }
-      header h1 {
-        font-family: "Syne", sans-serif;
-        font-weight: 800;
-        font-size: clamp(36px, 5vw, 60px);
-        line-height: 1.05;
-        position: relative;
-      }
-      header h1 span {
-        color: var(--accent);
-      }
-      header p.lead {
-        font-family: "Lora", serif;
-        font-style: italic;
-        color: #a0a0b0;
-        margin-top: 18px;
-        font-size: 18px;
-        max-width: 560px;
-        position: relative;
-      }
-      .header-dots {
-        position: absolute;
-        right: 60px;
-        top: 50%;
-        transform: translateY(-50%);
-        display: grid;
-        grid-template-columns: repeat(6, 1fr);
-        gap: 10px;
-        opacity: 0.15;
-      }
-      .header-dots span {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #fff;
-        display: block;
-      }
-
-      /* ── LAYOUT ── */
-      .container {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 0 32px;
-      }
-
-      /* ── OVERVIEW PILLS ── */
-      .overview {
-        background: var(--card);
-        border-bottom: 2px solid var(--border);
-        padding: 28px 0;
-      }
-      .overview-inner {
-        display: flex;
-        gap: 0;
-        align-items: stretch;
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 0 32px;
-      }
-      .ov-item {
-        flex: 1;
-        text-align: center;
-        padding: 12px 16px;
-        border-right: 1px solid var(--border);
-      }
-      .ov-item:last-child {
-        border-right: none;
-      }
-      .ov-num {
-        font-family: "Syne", sans-serif;
-        font-weight: 800;
-        font-size: 30px;
-        color: var(--accent);
-        line-height: 1;
-      }
-      .ov-label {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 10px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-        margin-top: 4px;
-      }
-
-      /* ── SECTION HEADERS ── */
-      .section {
-        padding: 64px 0 40px;
-        border-bottom: 1px solid var(--border);
-      }
-      .section:last-of-type {
-        border-bottom: none;
-      }
-      .section-label {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 10px;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: var(--accent);
-        margin-bottom: 10px;
-      }
-      .section h2 {
-        font-family: "Syne", sans-serif;
-        font-weight: 700;
-        font-size: 28px;
-        line-height: 1.2;
-        margin-bottom: 20px;
-      }
-      .section p {
-        color: #333;
-        margin-bottom: 14px;
-      }
-
-      /* ── CALLOUT BOX ── */
-      .callout {
-        border-left: 4px solid var(--accent);
-        background: #eef2ff;
-        padding: 16px 20px;
-        border-radius: 0 8px 8px 0;
-        margin: 20px 0;
-        font-size: 15px;
-      }
-      .callout strong {
-        color: var(--accent);
-        font-family: "Syne", sans-serif;
-      }
-      .callout.warn {
-        border-color: var(--warn);
-        background: #fdf5e6;
-      }
-      .callout.warn strong {
-        color: var(--warn);
-      }
-
-      /* ── CODE BLOCK ── */
-      pre {
-        background: var(--code-bg);
-        color: var(--code-fg);
-        font-family: "JetBrains Mono", monospace;
-        font-size: 13px;
-        line-height: 1.7;
-        padding: 22px 24px;
-        border-radius: 10px;
-        overflow-x: auto;
-        margin: 20px 0;
-      }
-      pre .comment {
-        color: #5a6a5c;
-      }
-      pre .cmd {
-        color: #fff;
-      }
-      pre .flag {
-        color: #ffd27a;
-      }
-      pre .path {
-        color: #7dd4fc;
-      }
-      pre .str {
-        color: #f9a8d4;
-      }
-      code {
-        font-family: "JetBrains Mono", monospace;
-        background: #e8e5de;
-        padding: 2px 7px;
-        border-radius: 4px;
-        font-size: 14px;
-        color: #2a5cff;
-      }
-
-      /* ── FOLDER TREE ── */
+      /* Folder Tree */
       .folder-tree {
-        background: var(--code-bg);
-        color: #e0e0e0;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 13px;
-        line-height: 2;
-        padding: 22px 24px;
-        border-radius: 10px;
-        margin: 20px 0;
+        @apply bg-slate-900 text-slate-300 p-6 rounded-2xl font-mono text-sm leading-[2.2] shadow-xl ring-1 ring-slate-800 my-8 overflow-x-auto;
       }
       .folder-tree .dir {
-        color: #7dd4fc;
-        font-weight: 500;
+        @apply text-sky-400 font-medium;
       }
       .folder-tree .file {
-        color: #a8ffb0;
+        @apply text-emerald-300;
       }
       .folder-tree .note {
-        color: #5a6a5c;
+        @apply text-slate-500 italic ml-2 text-xs;
       }
 
-      /* ── PIPELINE DIAGRAM ── */
-      .pipeline {
-        display: flex;
-        align-items: center;
-        gap: 0;
-        margin: 32px 0;
-        flex-wrap: wrap;
-        row-gap: 16px;
+      /* Base typography overrides */
+      h2 {
+        @apply text-slate-900;
       }
-      .pipe-step {
-        background: var(--card);
-        border: 2px solid var(--border);
-        border-radius: 12px;
-        padding: 14px 16px;
-        text-align: center;
-        flex: 1;
-        min-width: 100px;
-        position: relative;
+      p {
+        @apply text-slate-600 mb-4 leading-relaxed;
       }
-      .pipe-step .pipe-icon {
-        font-size: 22px;
-        margin-bottom: 6px;
-      }
-      .pipe-step .pipe-label {
-        font-family: "Syne", sans-serif;
-        font-weight: 700;
-        font-size: 12px;
-        color: var(--ink);
-        line-height: 1.2;
-      }
-      .pipe-step .pipe-sub {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 9px;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-top: 3px;
-      }
-      .pipe-arrow {
-        color: var(--accent);
-        font-size: 22px;
-        padding: 0 4px;
-        flex-shrink: 0;
-      }
-      .pipe-step.active {
-        border-color: var(--accent);
-        background: #eef2ff;
-      }
-
-      /* ── LABEL CARDS ── */
-      .label-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
-        margin: 24px 0;
-      }
-      .label-card {
-        border-radius: 12px;
-        padding: 20px;
-        border: 2px solid transparent;
-      }
-      .label-card.proper {
-        background: #e8faf3;
-        border-color: var(--proper);
-      }
-      .label-card.needs {
-        background: #fff5e6;
-        border-color: var(--warn);
-      }
-      .label-card.skip {
-        background: #fdecea;
-        border-color: var(--skip);
-      }
-      .label-card .lc-badge {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 10px;
-        letter-spacing: 0.15em;
-        text-transform: uppercase;
-        font-weight: 500;
-        margin-bottom: 10px;
-      }
-      .label-card.proper .lc-badge {
-        color: var(--proper);
-      }
-      .label-card.needs .lc-badge {
-        color: var(--warn);
-      }
-      .label-card.skip .lc-badge {
-        color: var(--skip);
-      }
-      .label-card .lc-icon {
-        font-size: 28px;
-        margin-bottom: 8px;
-      }
-      .label-card ul {
-        list-style: none;
-        font-size: 14px;
-        color: #333;
-        line-height: 1.7;
-      }
-      .label-card ul li::before {
-        content: "– ";
-        color: var(--muted);
-      }
-
-      /* ── CYCLE DIAGRAM ── */
-      .cycle {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 12px;
-        margin: 28px 0;
-        counter-reset: cyc;
-      }
-      .cyc-step {
-        background: var(--card);
-        border: 1.5px solid var(--border);
-        border-radius: 12px;
-        padding: 16px 14px;
-        position: relative;
-        counter-increment: cyc;
-      }
-      .cyc-step::before {
-        content: counter(cyc);
-        position: absolute;
-        top: -12px;
-        left: 12px;
-        background: var(--accent);
-        color: #fff;
-        font-family: "Syne", sans-serif;
-        font-size: 11px;
-        font-weight: 700;
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .cyc-step .cs-icon {
-        font-size: 20px;
-        margin-bottom: 6px;
-      }
-      .cyc-step .cs-label {
-        font-family: "Syne", sans-serif;
-        font-weight: 700;
-        font-size: 13px;
-        line-height: 1.3;
-        margin-bottom: 4px;
-      }
-      .cyc-step .cs-desc {
-        font-size: 12px;
-        color: var(--muted);
-        font-family: "JetBrains Mono", monospace;
-        line-height: 1.5;
-      }
-
-      /* ── OUTPUT FILES ── */
-      .file-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 14px;
-        margin: 20px 0;
-      }
-      .file-card {
-        background: var(--card);
-        border: 1.5px solid var(--border);
-        border-radius: 10px;
-        padding: 16px;
-        display: flex;
-        gap: 12px;
-        align-items: flex-start;
-      }
-      .file-card .fc-icon {
-        font-size: 26px;
-        flex-shrink: 0;
-      }
-      .file-card .fc-name {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 13px;
-        color: var(--accent);
-        font-weight: 500;
-      }
-      .file-card .fc-desc {
-        font-size: 13px;
-        color: var(--muted);
-        margin-top: 3px;
-        font-style: italic;
-      }
-
-      /* ── FEATURE TABLE ── */
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
-        margin: 20px 0;
-        background: var(--card);
-        border-radius: 10px;
-        overflow: hidden;
-        border: 1.5px solid var(--border);
-      }
-      th {
-        background: var(--ink);
-        color: #fff;
-        font-family: "Syne", sans-serif;
-        font-weight: 600;
-        font-size: 12px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        padding: 12px 16px;
-        text-align: left;
-      }
-      td {
-        padding: 11px 16px;
-        border-top: 1px solid var(--border);
-        color: #333;
-        vertical-align: top;
-      }
-      tr:nth-child(even) td {
-        background: #faf9f6;
-      }
-      td:first-child {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 13px;
-        color: var(--accent);
-        white-space: nowrap;
-      }
-
-      /* ── POSTURE SVG VISUAL ── */
-      .posture-visual {
-        display: flex;
-        gap: 32px;
-        justify-content: center;
-        align-items: flex-end;
-        margin: 32px 0;
-        padding: 28px;
-        background: var(--card);
-        border: 1.5px solid var(--border);
-        border-radius: 14px;
-      }
-      .pv-figure {
-        text-align: center;
-      }
-      .pv-label {
-        font-family: "Syne", sans-serif;
-        font-size: 13px;
-        font-weight: 700;
-        margin-top: 10px;
-      }
-      .pv-label.good {
-        color: var(--proper);
-      }
-      .pv-label.bad {
-        color: var(--warn);
-      }
-
-      /* ── TAGS ── */
-      .tag {
-        display: inline-block;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 11px;
-        padding: 3px 9px;
-        border-radius: 4px;
-        margin: 2px;
-        background: #e8e5de;
-        color: var(--ink);
-      }
-
-      /* ── FOOTER ── */
-      footer {
-        background: var(--ink);
-        color: #5a5a6e;
-        padding: 32px 48px;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 12px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 12px;
-      }
-      footer span {
-        color: var(--accent);
-      }
-
-      /* ── RESPONSIVE ── */
-      @media (max-width: 680px) {
-        .label-grid {
-          grid-template-columns: 1fr;
-        }
-        .cycle {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .file-grid {
-          grid-template-columns: 1fr;
-        }
-        .overview-inner {
-          flex-wrap: wrap;
-        }
-        .pipeline {
-          flex-direction: column;
-        }
-        .pipe-arrow {
-          transform: rotate(90deg);
-        }
-        .posture-visual {
-          flex-direction: column;
-          align-items: center;
-        }
-        header {
-          padding: 40px 24px;
-        }
-        .container {
-          padding: 0 20px;
-        }
-        .header-dots {
-          display: none;
-        }
+      code:not(pre code) {
+        @apply font-mono bg-slate-100 text-brand px-1.5 py-0.5 rounded-md text-[0.85em] font-medium border border-slate-200;
       }
     </style>
   </head>
-  <body>
+  <body
+    class="bg-paper font-sans text-slate-700 antialiased min-h-screen flex flex-col selection:bg-brand selection:text-white"
+  >
     <!-- HEADER -->
-    <header>
-      <div class="header-dots">
-        <!-- dot grid -->
-        <span></span><span></span><span></span><span></span><span></span
-        ><span></span> <span></span><span></span><span></span><span></span
-        ><span></span><span></span> <span></span><span></span><span></span
-        ><span></span><span></span><span></span> <span></span><span></span
-        ><span></span><span></span><span></span><span></span> <span></span
-        ><span></span><span></span><span></span><span></span><span></span>
-        <span></span><span></span><span></span><span></span><span></span
-        ><span></span>
+    <header
+      class="bg-dark text-white relative overflow-hidden pt-24 pb-32 px-6 lg:px-8 border-b-4 border-brand"
+    >
+      <div class="absolute inset-0 bg-grid-pattern opacity-50"></div>
+
+      <!-- Ambient Glow -->
+      <div
+        class="absolute top-0 right-0 -mr-32 -mt-32 w-96 h-96 rounded-full bg-brand/20 blur-3xl pointer-events-none"
+      ></div>
+
+      <div class="max-w-4xl mx-auto relative z-10">
+        <div
+          class="font-mono text-xs md:text-sm font-semibold tracking-[0.2em] text-brand uppercase mb-6 flex items-center gap-3"
+        >
+          <span class="w-8 h-[2px] bg-brand inline-block"></span>
+          SukatLikod · ML Training Guide
+        </div>
+        <h1
+          class="font-syne font-extrabold text-5xl md:text-6xl lg:text-7xl leading-tight tracking-tight mb-6"
+        >
+          From
+          <span
+            class="text-transparent bg-clip-text bg-gradient-to-r from-brand to-cyan-400"
+            >Photos</span
+          >
+          to<br />Trained Model
+        </h1>
+        <p
+          class="text-slate-400 text-lg md:text-xl max-w-2xl font-light border-l-2 border-slate-700 pl-4"
+        >
+          A step-by-step visual guide for building and retraining a
+          posture-detection machine learning model.
+        </p>
       </div>
-      <div class="header-badge">SukatLikod · ML Training Guide</div>
-      <h1>From <span>Photos</span> to<br />Trained Model</h1>
-      <p class="lead">
-        A step-by-step visual guide for building and retraining a
-        posture-detection machine learning model.
-      </p>
     </header>
 
-    <!-- OVERVIEW STRIP -->
-    <div class="overview">
-      <div class="overview-inner">
-        <div class="ov-item">
-          <div class="ov-num">4</div>
-          <div class="ov-label">Feature Inputs</div>
+    <!-- OVERVIEW STRIP (Floating) -->
+    <div class="max-w-4xl mx-auto px-6 lg:px-8 relative -mt-16 z-20 w-full">
+      <div
+        class="bg-white rounded-2xl shadow-xl ring-1 ring-slate-200 p-2 flex flex-wrap md:flex-nowrap divide-y md:divide-y-0 md:divide-x divide-slate-100"
+      >
+        <div class="flex-1 text-center py-4 px-2">
+          <div class="font-syne font-bold text-3xl md:text-4xl text-brand">
+            4
+          </div>
+          <div
+            class="font-mono text-[10px] md:text-xs tracking-wider uppercase text-slate-400 mt-1 font-medium"
+          >
+            Feature Inputs
+          </div>
         </div>
-        <div class="ov-item">
-          <div class="ov-num">3</div>
-          <div class="ov-label">Label Classes</div>
+        <div class="flex-1 text-center py-4 px-2">
+          <div class="font-syne font-bold text-3xl md:text-4xl text-brand">
+            3
+          </div>
+          <div
+            class="font-mono text-[10px] md:text-xs tracking-wider uppercase text-slate-400 mt-1 font-medium"
+          >
+            Label Classes
+          </div>
         </div>
-        <div class="ov-item">
-          <div class="ov-num">7</div>
-          <div class="ov-label">Step Cycle</div>
+        <div class="flex-1 text-center py-4 px-2">
+          <div class="font-syne font-bold text-3xl md:text-4xl text-brand">
+            7
+          </div>
+          <div
+            class="font-mono text-[10px] md:text-xs tracking-wider uppercase text-slate-400 mt-1 font-medium"
+          >
+            Step Cycle
+          </div>
         </div>
-        <div class="ov-item">
-          <div class="ov-num">2 fps</div>
-          <div class="ov-label">Extract Rate</div>
-        </div>
-        <div class="ov-item">
-          <div class="ov-num">8000</div>
-          <div class="ov-label">API Port</div>
+        <div class="flex-1 text-center py-4 px-2">
+          <div class="font-syne font-bold text-3xl md:text-4xl text-brand">
+            2 <span class="text-lg">fps</span>
+          </div>
+          <div
+            class="font-mono text-[10px] md:text-xs tracking-wider uppercase text-slate-400 mt-1 font-medium"
+          >
+            Extract Rate
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="container">
+    <!-- MAIN CONTENT -->
+    <main
+      class="max-w-4xl mx-auto px-6 lg:px-8 py-16 w-full space-y-24 flex-grow"
+    >
       <!-- ── SECTION 1: CONCEPT ── -->
-      <section class="section">
-        <div class="section-label">Section 01 — Core Concept</div>
-        <h2>How the Model Actually Works</h2>
-        <p>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 01
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          How the Model Actually Works
+        </h2>
+        <p class="text-lg">
           The model does <em>not</em> process raw photos directly. Instead,
           photos are used to extract numeric <strong>posture features</strong> —
           measurements describing the person's position. Those numbers become
           the training data.
         </p>
 
-        <div class="callout">
-          <strong>Key Idea:</strong> A photo → keypoints → numeric features →
-          label. The model learns from the numbers, not the pixels.
+        <div
+          class="bg-brandLight border-l-4 border-brand p-5 rounded-r-xl my-6 flex gap-4 items-start shadow-sm"
+        >
+          <div class="text-brand text-xl">💡</div>
+          <p class="m-0 text-slate-700 text-sm md:text-base">
+            <strong class="font-syne text-brand font-bold text-lg block mb-1"
+              >Key Idea</strong
+            >
+            A photo → keypoints → numeric features → label. The model learns
+            from the extracted numbers, not the raw pixels.
+          </p>
         </div>
 
         <!-- Posture figures SVG -->
-        <div class="posture-visual">
+        <div
+          class="bg-white p-8 md:p-12 rounded-3xl shadow-sm ring-1 ring-slate-200 my-10 flex flex-col md:flex-row items-center justify-center gap-10 md:gap-20"
+        >
           <!-- Proper posture figure -->
-          <div class="pv-figure">
-            <svg
-              width="90"
-              height="180"
-              viewBox="0 0 90 180"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
+          <div class="flex flex-col items-center group">
+            <div
+              class="relative bg-slate-50 p-6 rounded-2xl ring-1 ring-slate-100 group-hover:ring-proper/30 transition-all group-hover:shadow-md"
             >
-              <!-- head -->
-              <circle
-                cx="45"
-                cy="20"
-                r="14"
-                fill="#1eb87a"
-                opacity=".15"
-                stroke="#1eb87a"
-                stroke-width="2"
-              />
-              <!-- spine straight -->
-              <line
-                x1="45"
-                y1="34"
-                x2="45"
-                y2="120"
-                stroke="#1eb87a"
-                stroke-width="3"
-                stroke-linecap="round"
-              />
-              <!-- shoulders level -->
-              <line
-                x1="20"
-                y1="55"
-                x2="70"
-                y2="55"
-                stroke="#1eb87a"
-                stroke-width="2.5"
-                stroke-linecap="round"
-              />
-              <!-- arms -->
-              <line
-                x1="20"
-                y1="55"
-                x2="14"
-                y2="95"
-                stroke="#1eb87a"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <line
-                x1="70"
-                y1="55"
-                x2="76"
-                y2="95"
-                stroke="#1eb87a"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <!-- pelvis -->
-              <line
-                x1="30"
-                y1="120"
-                x2="60"
-                y2="120"
-                stroke="#1eb87a"
-                stroke-width="2.5"
-                stroke-linecap="round"
-              />
-              <!-- legs -->
-              <line
-                x1="35"
-                y1="120"
-                x2="30"
-                y2="170"
-                stroke="#1eb87a"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <line
-                x1="55"
-                y1="120"
-                x2="60"
-                y2="170"
-                stroke="#1eb87a"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <!-- vertical guide -->
-              <line
-                x1="45"
-                y1="5"
-                x2="45"
-                y2="175"
-                stroke="#1eb87a"
-                stroke-width="1"
-                stroke-dasharray="4 3"
-                opacity=".3"
-              />
-            </svg>
-            <div class="pv-label good">✓ Proper</div>
+              <svg
+                width="100"
+                height="200"
+                viewBox="0 0 90 180"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <!-- head -->
+                <circle
+                  cx="45"
+                  cy="20"
+                  r="14"
+                  fill="#1eb87a"
+                  opacity=".15"
+                  stroke="#1eb87a"
+                  stroke-width="2"
+                />
+                <!-- spine straight -->
+                <line
+                  x1="45"
+                  y1="34"
+                  x2="45"
+                  y2="120"
+                  stroke="#1eb87a"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                />
+                <!-- shoulders level -->
+                <line
+                  x1="20"
+                  y1="55"
+                  x2="70"
+                  y2="55"
+                  stroke="#1eb87a"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                />
+                <!-- arms -->
+                <line
+                  x1="20"
+                  y1="55"
+                  x2="14"
+                  y2="95"
+                  stroke="#1eb87a"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <line
+                  x1="70"
+                  y1="55"
+                  x2="76"
+                  y2="95"
+                  stroke="#1eb87a"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <!-- pelvis -->
+                <line
+                  x1="30"
+                  y1="120"
+                  x2="60"
+                  y2="120"
+                  stroke="#1eb87a"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                />
+                <!-- legs -->
+                <line
+                  x1="35"
+                  y1="120"
+                  x2="30"
+                  y2="170"
+                  stroke="#1eb87a"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <line
+                  x1="55"
+                  y1="120"
+                  x2="60"
+                  y2="170"
+                  stroke="#1eb87a"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <!-- vertical guide -->
+                <line
+                  x1="45"
+                  y1="5"
+                  x2="45"
+                  y2="175"
+                  stroke="#1eb87a"
+                  stroke-width="1.5"
+                  stroke-dasharray="4 3"
+                  opacity=".3"
+                />
+              </svg>
+            </div>
+            <div
+              class="font-syne font-bold text-proper mt-5 bg-properLight px-4 py-1.5 rounded-full text-sm flex items-center gap-2"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="3"
+                  d="M5 13l4 4L19 7"
+                ></path>
+              </svg>
+              Proper
+            </div>
           </div>
 
-          <!-- vs label -->
-          <div
-            style="
-              font-family: &quot;Syne&quot;, sans-serif;
-              font-size: 22px;
-              font-weight: 800;
-              color: #c5c0b5;
-              padding-bottom: 40px;
-            "
-          >
+          <!-- VS Divider -->
+          <div class="font-syne italic text-3xl font-bold text-slate-200">
             vs
           </div>
 
           <!-- Needs correction figure -->
-          <div class="pv-figure">
-            <svg
-              width="90"
-              height="180"
-              viewBox="0 0 90 180"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
+          <div class="flex flex-col items-center group">
+            <div
+              class="relative bg-slate-50 p-6 rounded-2xl ring-1 ring-slate-100 group-hover:ring-warn/30 transition-all group-hover:shadow-md"
             >
-              <!-- head (forward) -->
-              <circle
-                cx="55"
-                cy="22"
-                r="14"
-                fill="#e8a020"
-                opacity=".15"
-                stroke="#e8a020"
-                stroke-width="2"
-              />
-              <!-- slouched spine curve -->
-              <path
-                d="M45 36 C40 60 35 80 38 120"
-                stroke="#e8a020"
-                stroke-width="3"
-                stroke-linecap="round"
+              <svg
+                width="100"
+                height="200"
+                viewBox="0 0 90 180"
                 fill="none"
-              />
-              <!-- uneven shoulders -->
-              <line
-                x1="20"
-                y1="58"
-                x2="66"
-                y2="52"
-                stroke="#e8a020"
-                stroke-width="2.5"
-                stroke-linecap="round"
-              />
-              <!-- arms -->
-              <line
-                x1="20"
-                y1="58"
-                x2="16"
-                y2="98"
-                stroke="#e8a020"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <line
-                x1="66"
-                y1="52"
-                x2="72"
-                y2="92"
-                stroke="#e8a020"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <!-- pelvis -->
-              <line
-                x1="28"
-                y1="120"
-                x2="58"
-                y2="120"
-                stroke="#e8a020"
-                stroke-width="2.5"
-                stroke-linecap="round"
-              />
-              <!-- legs -->
-              <line
-                x1="33"
-                y1="120"
-                x2="28"
-                y2="170"
-                stroke="#e8a020"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <line
-                x1="53"
-                y1="120"
-                x2="58"
-                y2="170"
-                stroke="#e8a020"
-                stroke-width="2"
-                stroke-linecap="round"
-                opacity=".7"
-              />
-              <!-- vertical guide (offset) -->
-              <line
-                x1="45"
-                y1="5"
-                x2="45"
-                y2="175"
-                stroke="#e8a020"
-                stroke-width="1"
-                stroke-dasharray="4 3"
-                opacity=".3"
-              />
-              <!-- forward head arrow -->
-              <path
-                d="M44 22 L52 22"
-                stroke="#e8a020"
-                stroke-width="1.5"
-                stroke-dasharray="3 2"
-                opacity=".6"
-              />
-            </svg>
-            <div class="pv-label bad">⚠ Needs Correction</div>
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <!-- head (forward) -->
+                <circle
+                  cx="55"
+                  cy="22"
+                  r="14"
+                  fill="#e8a020"
+                  opacity=".15"
+                  stroke="#e8a020"
+                  stroke-width="2"
+                />
+                <!-- slouched spine curve -->
+                <path
+                  d="M45 36 C40 60 35 80 38 120"
+                  stroke="#e8a020"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  fill="none"
+                />
+                <!-- uneven shoulders -->
+                <line
+                  x1="20"
+                  y1="58"
+                  x2="66"
+                  y2="52"
+                  stroke="#e8a020"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                />
+                <!-- arms -->
+                <line
+                  x1="20"
+                  y1="58"
+                  x2="16"
+                  y2="98"
+                  stroke="#e8a020"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <line
+                  x1="66"
+                  y1="52"
+                  x2="72"
+                  y2="92"
+                  stroke="#e8a020"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <!-- pelvis -->
+                <line
+                  x1="28"
+                  y1="120"
+                  x2="58"
+                  y2="120"
+                  stroke="#e8a020"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                />
+                <!-- legs -->
+                <line
+                  x1="33"
+                  y1="120"
+                  x2="28"
+                  y2="170"
+                  stroke="#e8a020"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <line
+                  x1="53"
+                  y1="120"
+                  x2="58"
+                  y2="170"
+                  stroke="#e8a020"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  opacity=".7"
+                />
+                <!-- vertical guide (offset) -->
+                <line
+                  x1="45"
+                  y1="5"
+                  x2="45"
+                  y2="175"
+                  stroke="#e8a020"
+                  stroke-width="1.5"
+                  stroke-dasharray="4 3"
+                  opacity=".3"
+                />
+                <!-- forward head arrow -->
+                <path
+                  d="M44 22 L52 22"
+                  stroke="#e8a020"
+                  stroke-width="2"
+                  stroke-dasharray="3 2"
+                  opacity=".7"
+                />
+              </svg>
+            </div>
+            <div
+              class="font-syne font-bold text-warn mt-5 bg-warnLight px-4 py-1.5 rounded-full text-sm flex items-center gap-2"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="3"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                ></path>
+              </svg>
+              Needs Correction
+            </div>
           </div>
         </div>
 
-        <!-- Feature table -->
-        <p>The 4 numeric features extracted from each frame:</p>
-        <table>
-          <thead>
-            <tr>
-              <th>Feature</th>
-              <th>What it measures</th>
-              <th>Unit</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>trunk_angle</td>
-              <td>How far the torso leans forward from vertical</td>
-              <td>degrees</td>
-            </tr>
-            <tr>
-              <td>head_forward</td>
-              <td>How far the head protrudes ahead of the spine baseline</td>
-              <td>pixels / ratio</td>
-            </tr>
-            <tr>
-              <td>shoulder_tilt</td>
-              <td>
-                Height difference between left and right shoulder keypoints
-              </td>
-              <td>degrees</td>
-            </tr>
-            <tr>
-              <td>trunk_variance</td>
-              <td>Variability of trunk position over recent frames</td>
-              <td>float</td>
-            </tr>
-          </tbody>
-        </table>
+        <p class="font-medium text-slate-800 mb-4">
+          The 4 numeric features extracted from each frame:
+        </p>
+        <div
+          class="overflow-hidden rounded-2xl ring-1 ring-slate-200 shadow-sm bg-white"
+        >
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 uppercase text-xs tracking-wider"
+                >
+                  Feature
+                </th>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 uppercase text-xs tracking-wider"
+                >
+                  What it measures
+                </th>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 uppercase text-xs tracking-wider"
+                >
+                  Unit
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr class="hover:bg-slate-50/50 transition-colors">
+                <td class="py-3 px-6 font-mono text-brand font-medium">
+                  trunk_angle
+                </td>
+                <td class="py-3 px-6 text-slate-600">
+                  How far the torso leans forward from vertical
+                </td>
+                <td class="py-3 px-6 text-slate-500">degrees</td>
+              </tr>
+              <tr class="hover:bg-slate-50/50 transition-colors">
+                <td class="py-3 px-6 font-mono text-brand font-medium">
+                  head_forward
+                </td>
+                <td class="py-3 px-6 text-slate-600">
+                  How far the head protrudes ahead of the spine baseline
+                </td>
+                <td class="py-3 px-6 text-slate-500">pixels / ratio</td>
+              </tr>
+              <tr class="hover:bg-slate-50/50 transition-colors">
+                <td class="py-3 px-6 font-mono text-brand font-medium">
+                  shoulder_tilt
+                </td>
+                <td class="py-3 px-6 text-slate-600">
+                  Height difference between left and right shoulder keypoints
+                </td>
+                <td class="py-3 px-6 text-slate-500">degrees</td>
+              </tr>
+              <tr class="hover:bg-slate-50/50 transition-colors">
+                <td class="py-3 px-6 font-mono text-brand font-medium">
+                  trunk_variance
+                </td>
+                <td class="py-3 px-6 text-slate-600">
+                  Variability of trunk position over recent frames
+                </td>
+                <td class="py-3 px-6 text-slate-500">float</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- ── SECTION 2: PIPELINE OVERVIEW ── -->
-      <section class="section">
-        <div class="section-label">Section 02 — Full Pipeline</div>
-        <h2>End-to-End Flow at a Glance</h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 02
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          End-to-End Flow at a Glance
+        </h2>
         <p>
           Here's how each piece connects — from raw video to a live prediction
           in the app.
         </p>
 
-        <div class="pipeline">
-          <div class="pipe-step active">
-            <div class="pipe-icon">🎥</div>
-            <div class="pipe-label">Raw Videos</div>
-            <div class="pipe-sub">10–30 sec clips</div>
+        <div
+          class="flex flex-col md:flex-row items-center justify-between gap-3 md:gap-2 my-10"
+        >
+          <!-- Step 1 -->
+          <div
+            class="bg-brandLight border-2 border-brand w-full md:w-auto flex-1 rounded-xl p-4 flex flex-col items-center text-center relative shadow-sm"
+          >
+            <span class="text-2xl mb-2 block">🎥</span>
+            <span class="font-syne font-bold text-slate-900 text-sm mb-1"
+              >Raw Videos</span
+            >
+            <span
+              class="font-mono text-[10px] text-slate-500 uppercase tracking-widest"
+              >10–30 sec clips</span
+            >
           </div>
-          <div class="pipe-arrow">→</div>
-          <div class="pipe-step">
-            <div class="pipe-icon">🖼️</div>
-            <div class="pipe-label">Extract Frames</div>
-            <div class="pipe-sub">ffmpeg @ 2 fps</div>
+          <div class="text-brand font-bold text-xl rotate-90 md:rotate-0">
+            →
           </div>
-          <div class="pipe-arrow">→</div>
-          <div class="pipe-step">
-            <div class="pipe-icon">🏷️</div>
-            <div class="pipe-label">Label Frames</div>
-            <div class="pipe-sub">proper / needs / skip</div>
+
+          <!-- Step 2 -->
+          <div
+            class="bg-white border border-slate-200 w-full md:w-auto flex-1 rounded-xl p-4 flex flex-col items-center text-center shadow-sm"
+          >
+            <span class="text-2xl mb-2 block">🖼️</span>
+            <span class="font-syne font-bold text-slate-900 text-sm mb-1"
+              >Extract Frames</span
+            >
+            <span
+              class="font-mono text-[10px] text-slate-500 uppercase tracking-widest"
+              >ffmpeg @ 2 fps</span
+            >
           </div>
-          <div class="pipe-arrow">→</div>
-          <div class="pipe-step">
-            <div class="pipe-icon">📊</div>
-            <div class="pipe-label">Build CSV</div>
-            <div class="pipe-sub">posture_dataset.csv</div>
+          <div class="text-brand font-bold text-xl rotate-90 md:rotate-0">
+            →
           </div>
-          <div class="pipe-arrow">→</div>
-          <div class="pipe-step">
-            <div class="pipe-icon">🧠</div>
-            <div class="pipe-label">Train Model</div>
-            <div class="pipe-sub">train.py</div>
+
+          <!-- Step 3 -->
+          <div
+            class="bg-white border border-slate-200 w-full md:w-auto flex-1 rounded-xl p-4 flex flex-col items-center text-center shadow-sm"
+          >
+            <span class="text-2xl mb-2 block">🏷️</span>
+            <span class="font-syne font-bold text-slate-900 text-sm mb-1"
+              >Label Frames</span
+            >
+            <span
+              class="font-mono text-[10px] text-slate-500 uppercase tracking-widest"
+              >Manual Sorting</span
+            >
           </div>
-          <div class="pipe-arrow">→</div>
-          <div class="pipe-step">
-            <div class="pipe-icon">🚀</div>
-            <div class="pipe-label">Run API</div>
-            <div class="pipe-sub">uvicorn :8000</div>
+          <div class="text-brand font-bold text-xl rotate-90 md:rotate-0">
+            →
           </div>
-          <div class="pipe-arrow">→</div>
-          <div class="pipe-step">
-            <div class="pipe-icon">📱</div>
-            <div class="pipe-label">React App</div>
-            <div class="pipe-sub">/predict</div>
+
+          <!-- Step 4 -->
+          <div
+            class="bg-white border border-slate-200 w-full md:w-auto flex-1 rounded-xl p-4 flex flex-col items-center text-center shadow-sm"
+          >
+            <span class="text-2xl mb-2 block">🧠</span>
+            <span class="font-syne font-bold text-slate-900 text-sm mb-1"
+              >Train Model</span
+            >
+            <span
+              class="font-mono text-[10px] text-slate-500 uppercase tracking-widest"
+              >train.py</span
+            >
+          </div>
+          <div class="text-brand font-bold text-xl rotate-90 md:rotate-0">
+            →
+          </div>
+
+          <!-- Step 5 -->
+          <div
+            class="bg-white border border-slate-200 w-full md:w-auto flex-1 rounded-xl p-4 flex flex-col items-center text-center shadow-sm"
+          >
+            <span class="text-2xl mb-2 block">🚀</span>
+            <span class="font-syne font-bold text-slate-900 text-sm mb-1"
+              >Run API</span
+            >
+            <span
+              class="font-mono text-[10px] text-slate-500 uppercase tracking-widest"
+              >uvicorn :8000</span
+            >
           </div>
         </div>
       </section>
 
       <!-- ── SECTION 3: FOLDER SETUP ── -->
-      <section class="section">
-        <div class="section-label">Section 03 — Folder Setup</div>
-        <h2>Project Folder Structure</h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 03
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Project Folder Structure
+        </h2>
         <p>
           Create these folders in the project root before you start. The
           structure keeps raw material, labeled data, and model files clearly
           separated.
         </p>
 
-        <div class="folder-tree">
-          <span class="dir">project-root/</span><br />
-          ├── <span class="dir">dataset/</span><br />
-          │ ├── <span class="dir">raw_videos/</span>
-          <span class="note">← your original video clips go here</span><br />
-          │ ├── <span class="dir">frames/</span>
-          <span class="note">← extracted jpg frames from ffmpeg</span><br />
-          │ └── <span class="dir">labeled/</span><br />
-          │ ├── <span class="dir">proper/</span>
-          <span class="note">← frames with good posture</span><br />
-          │ ├── <span class="dir">needs_correction/</span>
-          <span class="note">← frames with poor posture</span><br />
-          │ └── <span class="dir">skip/</span>
-          <span class="note">← blurry, occluded, or wrong angle</span><br />
-          ├── <span class="dir">backend/</span><br />
-          │ ├── <span class="dir">data/</span><br />
-          │ │ ├── <span class="file">posture_dataset.csv</span>
-          <span class="note">← your training rows</span><br />
-          │ │ └── <span class="file">posture_dataset.sample.csv</span><br />
-          │ ├── <span class="dir">model/</span><br />
-          │ │ ├── <span class="file">posture_model.joblib</span>
-          <span class="note">← trained model (auto-generated)</span><br />
-          │ │ └── <span class="file">model_meta.json</span><br />
-          │ ├── <span class="file">train.py</span><br />
-          │ ├── <span class="file">api.py</span><br />
-          │ └── <span class="file">requirements.txt</span><br />
-          └── <span class="file">.env</span>
-          <span class="note">← VITE_ML_API_URL</span>
+        <div class="folder-tree relative">
+          <!-- Decorative terminal header -->
+          <div
+            class="absolute top-0 left-0 w-full bg-slate-950 px-4 py-2 flex gap-2 rounded-t-2xl border-b border-white/5"
+          >
+            <div class="w-3 h-3 rounded-full bg-rose-500"></div>
+            <div class="w-3 h-3 rounded-full bg-amber-500"></div>
+            <div class="w-3 h-3 rounded-full bg-emerald-500"></div>
+          </div>
+          <div class="pt-6">
+            <span class="dir font-bold text-white">project-root/</span><br />
+            ├── <span class="dir">dataset/</span><br />
+            │&nbsp;&nbsp;&nbsp;├── <span class="dir">raw_videos/</span>
+            <span class="note">← your original video clips go here</span><br />
+            │&nbsp;&nbsp;&nbsp;├── <span class="dir">frames/</span>
+            <span class="note">← extracted jpg frames from ffmpeg</span><br />
+            │&nbsp;&nbsp;&nbsp;└── <span class="dir">labeled/</span><br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├──
+            <span class="dir">proper/</span>
+            <span class="note">← frames with good posture</span><br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├──
+            <span class="dir">needs_correction/</span>
+            <span class="note">← frames with poor posture</span><br />
+            │&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└──
+            <span class="dir">skip/</span>
+            <span class="note">← blurry, occluded, or wrong angle</span><br />
+            ├── <span class="dir">backend/</span><br />
+            │&nbsp;&nbsp;&nbsp;├── <span class="dir">data/</span><br />
+            │&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;├──
+            <span class="file">posture_dataset.csv</span>
+            <span class="note">← your training rows</span><br />
+            │&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;└──
+            <span class="file">posture_dataset.sample.csv</span><br />
+            │&nbsp;&nbsp;&nbsp;├── <span class="dir">model/</span><br />
+            │&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;├──
+            <span class="file">posture_model.joblib</span>
+            <span class="note">← trained model (auto-generated)</span><br />
+            │&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;└──
+            <span class="file">model_meta.json</span><br />
+            │&nbsp;&nbsp;&nbsp;├── <span class="file">train.py</span><br />
+            │&nbsp;&nbsp;&nbsp;├── <span class="file">api.py</span><br />
+            │&nbsp;&nbsp;&nbsp;└── <span class="file">requirements.txt</span
+            ><br />
+            └── <span class="file">.env</span>
+            <span class="note">← configures VITE_ML_API_URL</span>
+          </div>
         </div>
       </section>
 
       <!-- ── SECTION 4: LABELING ── -->
-      <section class="section">
-        <div class="section-label">Section 04 — Labeling Rules</div>
-        <h2>Labeling Your Frames</h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 04
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Labeling Your Frames
+        </h2>
         <p>
           Define your labeling rules <em>before</em> you start and keep them
           consistent throughout. Moving a frame into the right folder is all you
-          need to do — no special tools required.
+          need to do.
         </p>
 
-        <div class="label-grid">
-          <div class="label-card proper">
-            <div class="lc-icon">✅</div>
-            <div class="lc-badge">proper/</div>
-            <ul>
-              <li>Neutral, upright posture</li>
-              <li>Head not significantly forward</li>
-              <li>Shoulders roughly level</li>
-              <li>Full body visible</li>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 my-8">
+          <!-- Proper Card -->
+          <div
+            class="bg-properLight border border-proper/30 rounded-2xl p-6 shadow-sm"
+          >
+            <div class="text-3xl mb-4">✅</div>
+            <div
+              class="font-mono text-xs font-bold text-proper tracking-widest uppercase mb-4 bg-white/60 inline-block px-3 py-1 rounded-md"
+            >
+              proper/
+            </div>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li class="flex gap-2">
+                <span class="text-proper/50">•</span> Neutral, upright posture
+              </li>
+              <li class="flex gap-2">
+                <span class="text-proper/50">•</span> Head not significantly
+                forward
+              </li>
+              <li class="flex gap-2">
+                <span class="text-proper/50">•</span> Shoulders roughly level
+              </li>
+              <li class="flex gap-2">
+                <span class="text-proper/50">•</span> Full body visible
+              </li>
             </ul>
           </div>
-          <div class="label-card needs">
-            <div class="lc-icon">⚠️</div>
-            <div class="lc-badge">needs_correction/</div>
-            <ul>
-              <li>Visible slouch or hunch</li>
-              <li>Clear forward head posture</li>
-              <li>Noticeably uneven shoulders</li>
-              <li>Body clearly visible</li>
+          <!-- Needs Correction Card -->
+          <div
+            class="bg-warnLight border border-warn/30 rounded-2xl p-6 shadow-sm"
+          >
+            <div class="text-3xl mb-4">⚠️</div>
+            <div
+              class="font-mono text-xs font-bold text-warn tracking-widest uppercase mb-4 bg-white/60 inline-block px-3 py-1 rounded-md"
+            >
+              needs_correction/
+            </div>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li class="flex gap-2">
+                <span class="text-warn/50">•</span> Visible slouch or hunch
+              </li>
+              <li class="flex gap-2">
+                <span class="text-warn/50">•</span> Clear forward head posture
+              </li>
+              <li class="flex gap-2">
+                <span class="text-warn/50">•</span> Noticeably uneven shoulders
+              </li>
+              <li class="flex gap-2">
+                <span class="text-warn/50">•</span> Body clearly visible
+              </li>
             </ul>
           </div>
-          <div class="label-card skip">
-            <div class="lc-icon">🚫</div>
-            <div class="lc-badge">skip/</div>
-            <ul>
-              <li>Blurry or out of focus</li>
-              <li>Body partially occluded</li>
-              <li>Wrong camera angle</li>
-              <li>Any uncertainty</li>
+          <!-- Skip Card -->
+          <div
+            class="bg-skipLight border border-skip/30 rounded-2xl p-6 shadow-sm"
+          >
+            <div class="text-3xl mb-4">🚫</div>
+            <div
+              class="font-mono text-xs font-bold text-skip tracking-widest uppercase mb-4 bg-white/60 inline-block px-3 py-1 rounded-md"
+            >
+              skip/
+            </div>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li class="flex gap-2">
+                <span class="text-skip/50">•</span> Blurry or out of focus
+              </li>
+              <li class="flex gap-2">
+                <span class="text-skip/50">•</span> Body partially occluded
+              </li>
+              <li class="flex gap-2">
+                <span class="text-skip/50">•</span> Wrong camera angle
+              </li>
+              <li class="flex gap-2">
+                <span class="text-skip/50">•</span> Any uncertainty
+              </li>
             </ul>
           </div>
         </div>
 
-        <div class="callout warn">
-          <strong>Tip:</strong> When in doubt, put the frame in
-          <code>skip/</code>. Clean data matters more than dataset size. An
-          uncertain label is worse than no label.
+        <div
+          class="bg-amber-50 border-l-4 border-warn p-5 rounded-r-xl my-6 flex gap-4 items-start shadow-sm"
+        >
+          <div class="text-warn text-xl">💡</div>
+          <p class="m-0 text-slate-800 text-sm md:text-base">
+            <strong class="font-syne text-warn font-bold block mb-1"
+              >Crucial Tip</strong
+            >
+            When in doubt, put the frame in <code>skip/</code>. Clean data
+            matters more than dataset size. An uncertain label is worse than no
+            label.
+          </p>
         </div>
       </section>
 
       <!-- ── SECTION 5: DATA COLLECTION ── -->
-      <section class="section">
-        <div class="section-label">Section 05 — Data Collection</div>
-        <h2>Collecting and Extracting Video Data</h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 05
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Collecting Data
+        </h2>
         <p>
           Aim for variety — different people, lighting conditions, and camera
           distances all help the model generalize better.
-        </p>
-
-        <div class="callout">
           <strong>Recommended starting target:</strong> 20–40 clips, roughly
-          balanced between <em>proper</em> and
-          <em>needs_correction</em> classes.
-        </div>
+          balanced between <em>proper</em> and <em>needs_correction</em>.
+        </p>
 
         <p>
           Once you have raw videos in <code>dataset/raw_videos/</code>, extract
@@ -1082,95 +863,148 @@
           training samples.
         </p>
 
-        <pre><span class="comment"># Extract frames from a clip at 2 fps
+        <div class="code-block relative">
+          <pre><span class="comment"># Extract frames from a clip at 2 fps
 # Replace clip01 with your actual filename</span>
 <span class="cmd">ffmpeg</span> <span class="flag">-i</span> <span class="path">dataset/raw_videos/clip01.mp4</span> <span class="flag">-vf</span> <span class="str">fps=2</span> <span class="path">dataset/frames/clip01_%04d.jpg</span>
 
 <span class="comment"># Repeat for each video clip</span>
 <span class="cmd">ffmpeg</span> <span class="flag">-i</span> <span class="path">dataset/raw_videos/clip02.mp4</span> <span class="flag">-vf</span> <span class="str">fps=2</span> <span class="path">dataset/frames/clip02_%04d.jpg</span></pre>
+        </div>
 
         <p>
           After extraction, open the <code>dataset/frames/</code> folder and
-          manually move each file into <code>proper/</code>,
-          <code>needs_correction/</code>, or <code>skip/</code> according to
-          your labeling rules above.
+          manually move each file into the appropriate labeled folder according
+          to your rules.
         </p>
       </section>
 
       <!-- ── SECTION 6: BUILDING CSV ── -->
-      <section class="section">
-        <div class="section-label">Section 06 — Dataset CSV</div>
-        <h2>Building <code>posture_dataset.csv</code></h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 06
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Building the Dataset CSV
+        </h2>
         <p>
-          Create the file at <code>backend/data/posture_dataset.csv</code>. Each
-          row represents one labeled frame with its 4 computed feature values.
+          Create <code>backend/data/posture_dataset.csv</code>. Each row
+          represents one labeled frame with its 4 computed feature values.
         </p>
 
-        <table>
-          <thead>
-            <tr>
-              <th>trunk_angle</th>
-              <th>head_forward</th>
-              <th>shoulder_tilt</th>
-              <th>trunk_variance</th>
-              <th>label</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>3.2</td>
-              <td>0.05</td>
-              <td>1.1</td>
-              <td>0.008</td>
-              <td style="color: var(--proper); font-weight: 600">proper</td>
-            </tr>
-            <tr>
-              <td>18.7</td>
-              <td>0.31</td>
-              <td>6.4</td>
-              <td>0.045</td>
-              <td style="color: var(--warn); font-weight: 600">
-                needs_correction
-              </td>
-            </tr>
-            <tr>
-              <td>22.1</td>
-              <td>0.27</td>
-              <td>8.0</td>
-              <td>0.062</td>
-              <td style="color: var(--warn); font-weight: 600">
-                needs_correction
-              </td>
-            </tr>
-            <tr>
-              <td>4.5</td>
-              <td>0.07</td>
-              <td>0.9</td>
-              <td>0.010</td>
-              <td style="color: var(--proper); font-weight: 600">proper</td>
-            </tr>
-          </tbody>
-        </table>
+        <div
+          class="overflow-x-auto rounded-2xl ring-1 ring-slate-200 shadow-sm bg-white my-8"
+        >
+          <table class="w-full text-left text-sm font-mono whitespace-nowrap">
+            <thead class="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 text-xs tracking-wider"
+                >
+                  trunk_angle
+                </th>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 text-xs tracking-wider"
+                >
+                  head_forward
+                </th>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 text-xs tracking-wider"
+                >
+                  shoulder_tilt
+                </th>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 text-xs tracking-wider"
+                >
+                  trunk_variance
+                </th>
+                <th
+                  class="py-4 px-6 font-syne font-bold text-slate-800 text-xs tracking-wider"
+                >
+                  label
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr class="hover:bg-slate-50">
+                <td class="py-3 px-6 text-slate-600">3.2</td>
+                <td class="py-3 px-6 text-slate-600">0.05</td>
+                <td class="py-3 px-6 text-slate-600">1.1</td>
+                <td class="py-3 px-6 text-slate-600">0.008</td>
+                <td class="py-3 px-6">
+                  <span
+                    class="bg-properLight text-proper px-2 py-1 rounded-md font-bold text-xs"
+                    >proper</span
+                  >
+                </td>
+              </tr>
+              <tr class="hover:bg-slate-50">
+                <td class="py-3 px-6 text-slate-600">18.7</td>
+                <td class="py-3 px-6 text-slate-600">0.31</td>
+                <td class="py-3 px-6 text-slate-600">6.4</td>
+                <td class="py-3 px-6 text-slate-600">0.045</td>
+                <td class="py-3 px-6">
+                  <span
+                    class="bg-warnLight text-warn px-2 py-1 rounded-md font-bold text-xs"
+                    >needs_correction</span
+                  >
+                </td>
+              </tr>
+              <tr class="hover:bg-slate-50">
+                <td class="py-3 px-6 text-slate-600">22.1</td>
+                <td class="py-3 px-6 text-slate-600">0.27</td>
+                <td class="py-3 px-6 text-slate-600">8.0</td>
+                <td class="py-3 px-6 text-slate-600">0.062</td>
+                <td class="py-3 px-6">
+                  <span
+                    class="bg-warnLight text-warn px-2 py-1 rounded-md font-bold text-xs"
+                    >needs_correction</span
+                  >
+                </td>
+              </tr>
+              <tr class="hover:bg-slate-50">
+                <td class="py-3 px-6 text-slate-600">4.5</td>
+                <td class="py-3 px-6 text-slate-600">0.07</td>
+                <td class="py-3 px-6 text-slate-600">0.9</td>
+                <td class="py-3 px-6 text-slate-600">0.010</td>
+                <td class="py-3 px-6">
+                  <span
+                    class="bg-properLight text-proper px-2 py-1 rounded-md font-bold text-xs"
+                    >proper</span
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-        <p>
+        <p class="text-sm">
           You can fill values manually if you have measurements, or use a
           feature-extraction script to compute them from your labeled frames
           automatically. See
-          <code>backend/data/posture_dataset.sample.csv</code> for a complete
-          reference.
+          <code>backend/data/posture_dataset.sample.csv</code> for reference.
         </p>
       </section>
 
       <!-- ── SECTION 7: TRAINING ── -->
-      <section class="section">
-        <div class="section-label">Section 07 — Training the Model</div>
-        <h2>First-Time Setup &amp; Training</h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 07
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Training the Model
+        </h2>
         <p>
           Run these commands <strong>once</strong> to set up your Python
           environment and train the initial model.
         </p>
 
-        <pre><span class="comment"># 1. Create a virtual environment</span>
+        <div class="code-block">
+          <pre><span class="comment"># 1. Create a virtual environment</span>
 <span class="cmd">python</span> <span class="flag">-m</span> venv .venv
 
 <span class="comment"># 2. Activate it (Windows)</span>
@@ -1181,200 +1015,360 @@
 
 <span class="comment"># 4. Train the model</span>
 <span class="cmd">python</span> <span class="path">backend/train.py</span> <span class="flag">--data</span> <span class="path">backend/data/posture_dataset.csv</span></pre>
+        </div>
 
         <p>
           After training, two output files will be created in
           <code>backend/model/</code>:
         </p>
 
-        <div class="file-grid">
-          <div class="file-card">
-            <div class="fc-icon">🧠</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-6">
+          <div
+            class="bg-white border border-slate-200 rounded-xl p-5 flex gap-4 items-start shadow-sm"
+          >
+            <div class="text-3xl mt-1">🧠</div>
             <div>
-              <div class="fc-name">posture_model.joblib</div>
-              <div class="fc-desc">
+              <div class="font-mono text-brand font-bold text-sm mb-1">
+                posture_model.joblib
+              </div>
+              <div class="text-slate-500 text-sm leading-snug">
                 The serialized trained model used for live predictions
               </div>
             </div>
           </div>
-          <div class="file-card">
-            <div class="fc-icon">📋</div>
+          <div
+            class="bg-white border border-slate-200 rounded-xl p-5 flex gap-4 items-start shadow-sm"
+          >
+            <div class="text-3xl mt-1">📋</div>
             <div>
-              <div class="fc-name">model_meta.json</div>
-              <div class="fc-desc">
+              <div class="font-mono text-brand font-bold text-sm mb-1">
+                model_meta.json
+              </div>
+              <div class="text-slate-500 text-sm leading-snug">
                 Metadata: feature names, class labels, training timestamp
               </div>
             </div>
           </div>
         </div>
-
-        
-        <p>Recommended retrain command (works even without activating venv):</p>
-
-        <pre><span class="cmd">.\.venv\Scripts\python.exe</span> <span class="path">backend/train.py</span> <span class="flag">--data</span> <span class="path">backend/data/posture_dataset.csv</span></pre>
       </section>
 
       <!-- ── SECTION 8: API + FRONTEND ── -->
-      <section class="section">
-        <div class="section-label">
-          Section 08 — Running the API &amp; Frontend
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 08
         </div>
-        <h2>Connecting the Model to the App</h2>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Running the API & Frontend
+        </h2>
         <p>
           Start the inference API, then connect the React frontend to it via
           environment variable.
         </p>
 
-        <pre><span class="comment"># Start the FastAPI inference server</span>
+        <div class="code-block">
+          <pre><span class="comment"># Start the FastAPI inference server</span>
 <span class="cmd">uvicorn</span> backend.api:app <span class="flag">--reload</span> <span class="flag">--host</span> 127.0.0.1 <span class="flag">--port</span> 8000
 
 <span class="comment"># Health check endpoint (open in browser)</span>
 <span class="str">http://127.0.0.1:8000/health</span></pre>
+        </div>
 
         <p>Create a <code>.env</code> file in the project root:</p>
 
-        <pre><span class="comment"># .env</span>
+        <div class="code-block">
+          <pre><span class="comment"># .env</span>
 <span class="str">VITE_ML_API_URL</span>=<span class="path">http://127.0.0.1:8000</span></pre>
+        </div>
 
         <p>Then run the frontend:</p>
 
-        <pre><span class="cmd">npm</span> run dev</pre>
-
-        <p>
-          The app will automatically call the <code>/predict</code> endpoint
-          with extracted posture features and display the result.
-        </p>
-        <div class="callout">
-          <strong>Production note:</strong> In Vercel, set
-          <code>VITE_ML_API_URL</code> to your Render backend URL (example:
-          <code>https://sukatlikod.onrender.com</code>).
-        </div>      </section>
-
-      <!-- ── SECTION 9: RETRAINING CYCLE ── -->
-      <section class="section">
-        <div class="section-label">Section 09 — Retraining Workflow</div>
-        <h2>The 7-Step Improvement Cycle</h2>
-        <p>
-          Retraining is expected and should happen repeatedly as your dataset
-          grows and improves. Follow this cycle to continuously improve model
-          accuracy.
-        </p>
-
-        <div class="cycle">
-          <div class="cyc-step">
-            <div class="cs-icon">🎥</div>
-            <div class="cs-label">Gather Videos</div>
-            <div class="cs-desc">More clips, new people, varied conditions</div>
-          </div>
-          <div class="cyc-step">
-            <div class="cs-icon">🖼️</div>
-            <div class="cs-label">Extract Frames</div>
-            <div class="cs-desc">ffmpeg at 2 fps per clip</div>
-          </div>
-          <div class="cyc-step">
-            <div class="cs-icon">🏷️</div>
-            <div class="cs-label">Label Frames</div>
-            <div class="cs-desc">Move into proper / needs / skip</div>
-          </div>
-          <div class="cyc-step">
-            <div class="cs-icon">📊</div>
-            <div class="cs-label">Update CSV</div>
-            <div class="cs-desc">Add new rows to posture_dataset.csv</div>
-          </div>
-          <div class="cyc-step">
-            <div class="cs-icon">🧠</div>
-            <div class="cs-label">Retrain</div>
-            <div class="cs-desc">python backend/train.py</div>
-          </div>
-          <div class="cyc-step">
-            <div class="cs-icon">🚀</div>
-            <div class="cs-label">Run &amp; Test</div>
-            <div class="cs-desc">Start API, open app, check predictions</div>
-          </div>
-          <div class="cyc-step">
-            <div class="cs-icon">🔍</div>
-            <div class="cs-label">Review Errors</div>
-            <div class="cs-desc">Fix wrong labels, improve data</div>
-          </div>
+        <div class="code-block">
+          <pre><span class="cmd">npm</span> run dev</pre>
         </div>
 
-        <p>For most retraining sessions, the only command you need is:</p>
-
-        <pre><span class="comment"># Activate venv (if not already active), then retrain</span>
-<span class="path">.venv\Scripts\activate</span>
-<span class="cmd">python</span> <span class="path">backend/train.py</span> <span class="flag">--data</span> <span class="path">backend/data/posture_dataset.csv</span></pre>
+        <div
+          class="bg-slate-50 border border-slate-200 p-5 rounded-xl my-6 flex gap-4 items-start"
+        >
+          <div class="text-xl">🌐</div>
+          <p class="m-0 text-slate-700 text-sm">
+            <strong class="font-syne text-slate-900 font-bold block mb-1"
+              >Production Note</strong
+            >
+            In Vercel, set <code>VITE_ML_API_URL</code> to your Render backend
+            URL (example: <code>https://sukatlikod.onrender.com</code>).
+          </p>
+        </div>
       </section>
 
+      <!-- ── SECTION 9: RETRAINING CYCLE ── -->
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 09
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          The 7-Step Improvement Cycle
+        </h2>
+        <p>
+          Retraining is expected and should happen repeatedly as your dataset
+          grows and improves.
+        </p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 my-10">
+          <!-- Step 1 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              1
+            </div>
+            <div class="text-2xl mb-2">🎥</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">
+              Gather Videos
+            </div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              More clips, new people, varied conditions
+            </div>
+          </div>
+          <!-- Step 2 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              2
+            </div>
+            <div class="text-2xl mb-2">🖼️</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">
+              Extract Frames
+            </div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              ffmpeg at 2 fps per clip
+            </div>
+          </div>
+          <!-- Step 3 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              3
+            </div>
+            <div class="text-2xl mb-2">🏷️</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">
+              Label Frames
+            </div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              Move into proper / needs / skip
+            </div>
+          </div>
+          <!-- Step 4 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              4
+            </div>
+            <div class="text-2xl mb-2">📊</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">
+              Update CSV
+            </div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              Add new rows to dataset
+            </div>
+          </div>
+          <!-- Step 5 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              5
+            </div>
+            <div class="text-2xl mb-2">🧠</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">Retrain</div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              python backend/train.py
+            </div>
+          </div>
+          <!-- Step 6 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              6
+            </div>
+            <div class="text-2xl mb-2">🚀</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">
+              Run & Test
+            </div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              Start API, check predictions
+            </div>
+          </div>
+          <!-- Step 7 -->
+          <div
+            class="bg-white p-6 rounded-2xl shadow-sm ring-1 ring-slate-200 relative pt-10 lg:col-span-2"
+          >
+            <div
+              class="absolute -top-3 left-6 bg-brand text-white w-8 h-8 rounded-full flex items-center justify-center font-syne font-bold text-sm shadow-md ring-4 ring-white"
+            >
+              7
+            </div>
+            <div class="text-2xl mb-2">🔍</div>
+            <div class="font-syne font-bold text-slate-900 mb-1">
+              Review Errors
+            </div>
+            <div class="text-xs text-slate-500 font-mono leading-relaxed">
+              Fix wrong labels, improve data, repeat.
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- ── SECTION 10: RENDER + VERCEL ── -->
-      <section class="section">
-        <div class="section-label">Section 10 — Render + Vercel Deployment</div>
-        <h2>How to Run the System Fully Online</h2>
+      <section class="scroll-mt-8">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 10
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Render + Vercel Deployment
+        </h2>
         <p>
           End users only need a browser. Python is required on the backend
           server, not on every client computer.
         </p>
 
-        <p>Render Web Service configuration:</p>
-        <pre><span class="str">Language</span>: Python
+        <p class="font-bold text-slate-800 mt-6 mb-2">
+          Render Web Service configuration:
+        </p>
+        <div class="code-block mt-0 mb-6">
+          <pre><span class="str">Language</span>: Python
 <span class="str">Root Directory</span>: (leave blank)
 <span class="str">Build Command</span>: pip install -r backend/requirements.txt
 <span class="str">Start Command</span>: uvicorn backend.api:app --host 0.0.0.0 --port $PORT</pre>
+        </div>
 
-        <p>Before deploying backend, make sure these files exist in GitHub:</p>
-        <pre><span class="path">backend/api.py</span>
+        <p class="font-bold text-slate-800 mt-6 mb-2">
+          Before deploying backend, ensure these exist in GitHub:
+        </p>
+        <div class="code-block mt-0 mb-6">
+          <pre><span class="path">backend/api.py</span>
 <span class="path">backend/requirements.txt</span>
 <span class="path">backend/model/posture_model.joblib</span>
 <span class="path">backend/model/model_meta.json</span></pre>
+        </div>
 
-        <p>Backend health check:</p>
-        <pre><span class="str">https://sukatlikod.onrender.com/health</span></pre>
-
-        <p>Frontend env in Vercel:</p>
-        <pre><span class="str">VITE_ML_API_URL=https://sukatlikod.onrender.com</span></pre>
-
-        <div class="callout warn">
-          <strong>Render Free Plan note:</strong> The service sleeps on
-          inactivity. First request after idle can take longer (cold start,
-          often up to around 50+ seconds). This is expected behavior.
+        <div
+          class="bg-amber-50 border-l-4 border-warn p-5 rounded-r-xl my-6 flex gap-4 items-start shadow-sm"
+        >
+          <div class="text-warn text-xl">⏳</div>
+          <p class="m-0 text-slate-800 text-sm md:text-base">
+            <strong class="font-syne text-warn font-bold block mb-1"
+              >Render Free Plan Note</strong
+            >
+            The service sleeps on inactivity. The first request after idle can
+            take longer (cold start, often up to 50+ seconds). This is normal.
+          </p>
         </div>
       </section>
+
       <!-- ── SECTION 11: CODEX TIPS ── -->
-      <section class="section">
-        <div class="section-label">Section 11 — Automation Tips</div>
-        <h2>Using Codex to Speed Things Up</h2>
+      <section class="scroll-mt-8 mb-12">
+        <div
+          class="font-mono text-xs tracking-[0.2em] font-bold text-brand uppercase mb-3 flex items-center gap-2"
+        >
+          <span class="w-2 h-2 rounded-full bg-brand"></span> Section 11
+        </div>
+        <h2 class="font-syne font-bold text-3xl md:text-4xl mb-6">
+          Automation Tips
+        </h2>
         <p>
-          Codex can automate the repetitive parts of this pipeline. Ask it to do
+          AI can automate the repetitive parts of this pipeline. Ask it to do
           one clear task at a time, then verify the output before moving on.
         </p>
 
-        <p>Useful tasks to delegate:</p>
+        <p class="font-medium text-slate-800 mt-6 mb-3">
+          Useful tasks to delegate:
+        </p>
+        <div class="flex flex-wrap gap-2 mb-8">
+          <span
+            class="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-mono shadow-sm"
+            >Generate feature-extraction script</span
+          >
+          <span
+            class="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-mono shadow-sm"
+            >Create a labeling helper utility</span
+          >
+          <span
+            class="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-mono shadow-sm"
+            >Validate class balance in CSV</span
+          >
+          <span
+            class="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-mono shadow-sm"
+            >Summarize training metrics</span
+          >
+          <span
+            class="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-mono shadow-sm"
+            >Write batch shell script</span
+          >
+          <span
+            class="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-mono shadow-sm"
+            >Auto-split dataset</span
+          >
+        </div>
 
-        <span class="tag"
-          >Generate feature-extraction script from labeled frames</span
+        <div
+          class="bg-brandLight border border-brand/20 p-5 rounded-xl flex gap-4 items-start shadow-sm"
         >
-        <span class="tag">Create a labeling helper utility</span>
-        <span class="tag">Validate class balance in posture_dataset.csv</span>
-        <span class="tag">Summarize training metrics after each run</span>
-        <span class="tag">Write a batch frame-extraction shell script</span>
-        <span class="tag">Auto-split dataset into train/validation sets</span>
-
-        <div class="callout" style="margin-top: 24px">
-          <strong>Best practice:</strong> Give Codex one well-defined task per
-          prompt. Verify each output before moving to the next step — chaining
-          unverified scripts can corrupt your dataset.
+          <div class="text-brand text-xl">🤖</div>
+          <p class="m-0 text-slate-700 text-sm md:text-base">
+            <strong class="font-syne text-brand font-bold block mb-1"
+              >Best Practice</strong
+            >
+            Give AI one well-defined task per prompt. Verify each output before
+            moving to the next step — chaining unverified scripts can corrupt
+            your dataset.
+          </p>
         </div>
       </section>
-    </div>
-    <!-- /container -->
+    </main>
 
     <!-- FOOTER -->
-    <footer>
-      <span>SukatLikod</span> — ML Training Guide · v1.0
-      <div style="color: #3a3a4e">
-        posture_model.joblib · FastAPI · React · MediaPipe
+    <footer
+      class="bg-slate-950 py-10 px-6 lg:px-8 mt-auto border-t border-slate-900"
+    >
+      <div
+        class="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-center md:text-left"
+      >
+        <div class="font-mono text-sm text-slate-400">
+          <span class="text-brand font-bold">SukatLikod</span> — ML Training
+          Guide · v1.0
+        </div>
+        <div class="font-mono text-xs text-slate-600 flex gap-3">
+          <span>posture_model.joblib</span>
+          <span>&middot;</span>
+          <span>FastAPI</span>
+          <span>&middot;</span>
+          <span>React</span>
+          <span>&middot;</span>
+          <span>MediaPipe</span>
+        </div>
       </div>
     </footer>
   </body>
 </html>
-
