@@ -63,6 +63,13 @@ type Sensitivity = {
   shoulderTilt: number;
 };
 
+type MlPrediction = {
+  label: "proper" | "needs_correction" | string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  feedback: string;
+};
+
 const WINDOW = 30;
 const DEFAULT_SENSITIVITY: Sensitivity = {
   trunkAngle: 18,
@@ -77,6 +84,13 @@ function clamp(n: number, a: number, b: number) {
 function avg(arr: number[]) {
   if (arr.length === 0) return null;
   return arr.reduce((s, x) => s + x, 0) / arr.length;
+}
+
+function variance(arr: number[]) {
+  if (arr.length < 2) return 0;
+  const mean = avg(arr) ?? 0;
+  const sq = arr.reduce((s, x) => s + (x - mean) * (x - mean), 0);
+  return sq / arr.length;
 }
 
 function pushLimited(arr: number[], x: number) {
@@ -179,6 +193,8 @@ export default function App() {
 
   const lastVideoTimeRef = useRef<number>(-1);
   const lastFeedbackRef = useRef<string>("");
+  const lastInferTsRef = useRef<number>(0);
+  const inferInFlightRef = useRef<boolean>(false);
 
   const buffersRef = useRef<{
     trunk: number[];
@@ -215,6 +231,10 @@ export default function App() {
   const [orientation, setOrientation] = useState("Unknown");
 
   const modelPath = useMemo(() => "/models/pose_landmarker_lite.task", []);
+  const mlApiUrl = useMemo(
+    () => (import.meta.env.VITE_ML_API_URL as string | undefined)?.trim() ?? "",
+    [],
+  );
 
   const resetBuffers = useCallback(() => {
     buffersRef.current.trunk = [];
@@ -351,6 +371,39 @@ export default function App() {
     [sensitivity.headDistance],
   );
 
+  const inferMl = useCallback(
+    async (payload: {
+      trunk_angle: number;
+      head_forward: number;
+      shoulder_tilt: number;
+      trunk_variance: number;
+    }): Promise<MlPrediction | null> => {
+      if (!mlApiUrl || inferInFlightRef.current) return null;
+
+      const now = Date.now();
+      if (now - lastInferTsRef.current < 800) return null;
+
+      inferInFlightRef.current = true;
+      lastInferTsRef.current = now;
+      try {
+        const res = await fetch(`${mlApiUrl}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) return null;
+        const data = (await res.json()) as MlPrediction;
+        return data;
+      } catch {
+        return null;
+      } finally {
+        inferInFlightRef.current = false;
+      }
+    },
+    [mlApiUrl],
+  );
+
   const draw = useCallback((result: PoseLandmarkerResult) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -453,8 +506,32 @@ export default function App() {
       if (d.t != null && d.h != null) {
         pushFeedback(nextScore, d.msg, d.t, d.h);
       }
+
+      if (d.t != null && d.h != null && d.s != null) {
+        const dT = d.t;
+        const dH = d.h;
+        const dS = d.s;
+        const trunkVar = variance(buffersRef.current.trunk);
+        void inferMl({
+          trunk_angle: dT,
+          head_forward: dH,
+          shoulder_tilt: dS,
+          trunk_variance: trunkVar,
+        }).then((pred) => {
+          if (!pred) return;
+
+          const mlOk = pred.label === "proper";
+          const mlScore = Math.round(clamp(pred.confidence * 100, 0, 100));
+          const mlMsg = pred.feedback || (mlOk ? "Good posture - keep it." : "Needs correction.");
+
+          setScore(mlScore);
+          setFeedback(mlMsg);
+          setPill(mlOk ? "good" : "fix");
+          pushFeedback(mlScore, mlMsg, dT, dH);
+        });
+      }
     },
-    [computeDecision, pushFeedback],
+    [computeDecision, inferMl, pushFeedback],
   );
 
   const loop = useCallback(
