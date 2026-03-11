@@ -12,7 +12,16 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-FEATURES = ["trunk_angle", "head_forward", "shoulder_tilt", "trunk_variance"]
+FEATURES = [
+    "trunk_angle",
+    "head_forward",
+    "shoulder_tilt",
+    "trunk_variance",
+    "neck_forward_contour",
+    "upper_back_curvature",
+    "torso_outline_angle",
+    "silhouette_stability",
+]
 LABEL = "label"
 
 

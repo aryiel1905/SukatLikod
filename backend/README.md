@@ -7,6 +7,10 @@ Create `backend/data/posture_dataset.csv` with these columns:
 - `head_forward`
 - `shoulder_tilt`
 - `trunk_variance`
+- `neck_forward_contour`
+- `upper_back_curvature`
+- `torso_outline_angle`
+- `silhouette_stability`
 - `label` (`proper` or `needs_correction`)
 
 Use `backend/data/posture_dataset.sample.csv` as a format template.
@@ -44,6 +48,10 @@ Request body:
   "trunk_angle": 14.3,
   "head_forward": 0.09,
   "shoulder_tilt": 0.03,
-  "trunk_variance": 1.2
+  "trunk_variance": 1.2,
+  "neck_forward_contour": 0.08,
+  "upper_back_curvature": 0.05,
+  "torso_outline_angle": 10.7,
+  "silhouette_stability": 0.88
 }
 ```
