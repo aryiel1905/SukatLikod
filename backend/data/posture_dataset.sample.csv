@@ -1,7 +1,7 @@
-trunk_angle,head_forward,shoulder_tilt,trunk_variance,label
-7.2,0.03,0.01,0.5,proper
-10.8,0.05,0.02,0.8,proper
-14.0,0.07,0.03,1.1,proper
-18.2,0.11,0.05,1.7,needs_correction
-22.5,0.14,0.06,2.4,needs_correction
-27.9,0.18,0.09,3.2,needs_correction
+trunk_angle,head_forward,shoulder_tilt,trunk_variance,neck_forward_contour,upper_back_curvature,torso_outline_angle,silhouette_stability,label
+7.2,0.03,0.01,0.5,0.04,0.03,5.8,0.94,proper
+10.8,0.05,0.02,0.8,0.05,0.04,7.1,0.91,proper
+14.0,0.07,0.03,1.1,0.07,0.06,9.3,0.88,proper
+18.2,0.11,0.05,1.7,0.11,0.09,13.6,0.73,needs_correction
+22.5,0.14,0.06,2.4,0.14,0.12,17.4,0.62,needs_correction
+27.9,0.18,0.09,3.2,0.19,0.16,22.8,0.48,needs_correction

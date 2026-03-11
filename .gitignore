@@ -31,3 +31,6 @@ dist-ssr
 __pycache__/
 *.pyc
 backend/model/
+
+# Local/raw reference data
+Reference/
