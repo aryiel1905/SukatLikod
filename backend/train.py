@@ -23,16 +23,41 @@ FEATURES = [
     "silhouette_stability",
 ]
 LABEL = "label"
+LEGACY_OPTIONAL_FEATURES = [
+    "neck_forward_contour",
+    "upper_back_curvature",
+    "torso_outline_angle",
+    "silhouette_stability",
+]
 
 
-def validate_dataset(df: pd.DataFrame) -> None:
-    required = FEATURES + [LABEL]
-    missing = [col for col in required if col not in df.columns]
+def normalize_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    required_base = [
+        "trunk_angle",
+        "head_forward",
+        "shoulder_tilt",
+        "trunk_variance",
+        LABEL,
+    ]
+    missing_base = [col for col in required_base if col not in df.columns]
+    if missing_base:
+        raise ValueError(f"Missing required column(s): {', '.join(missing_base)}")
+
+    missing_optional = [col for col in LEGACY_OPTIONAL_FEATURES if col not in df.columns]
+    for col in missing_optional:
+        # Legacy datasets in the repo only contain the original 4-feature schema.
+        df[col] = 0.0
+
+    missing = [col for col in FEATURES + [LABEL] if col not in df.columns]
     if missing:
         raise ValueError(f"Missing required column(s): {', '.join(missing)}")
 
     if df[LABEL].nunique() < 2:
         raise ValueError("Dataset must include at least two classes in 'label'.")
+
+    return df
 
 
 def main() -> None:
@@ -67,8 +92,7 @@ def main() -> None:
             "Create it from backend/data/posture_dataset.sample.csv."
         )
 
-    df = pd.read_csv(data_path)
-    validate_dataset(df)
+    df = normalize_dataset(pd.read_csv(data_path))
 
     X = df[FEATURES]
     y = df[LABEL].astype(str)
