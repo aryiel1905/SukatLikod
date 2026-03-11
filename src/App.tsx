@@ -19,7 +19,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  DrawingUtils,
   FilesetResolver,
   PoseLandmarker,
   type PoseLandmarkerResult,
@@ -31,6 +30,8 @@ const IDX = {
   R_EYE: 5,
   L_EAR: 7,
   R_EAR: 8,
+  L_ELBOW: 13,
+  R_ELBOW: 14,
   L_SHOULDER: 11,
   R_SHOULDER: 12,
   L_HIP: 23,
@@ -46,6 +47,7 @@ type OrientationKind =
   | "side_left"
   | "side_right"
   | "unknown";
+type ViewCalibration = "front" | "side" | "back";
 
 type FeedbackItem = {
   id: number;
@@ -63,6 +65,15 @@ type Sensitivity = {
   shoulderTilt: number;
 };
 
+type SilhouetteMetrics = {
+  neckForwardContour: number;
+  upperBackCurvature: number;
+  torsoOutlineAngle: number;
+  silhouetteStability: number;
+};
+
+type AudioMode = "off" | "voice";
+
 type MlPrediction = {
   label: "proper" | "needs_correction" | string;
   confidence: number;
@@ -71,11 +82,26 @@ type MlPrediction = {
 };
 
 const WINDOW = 30;
+const EMA_ALPHA = 0.25;
+const VIS_THRESHOLD = 0.35;
+const DRAW_VIS_THRESHOLD = 0.12;
+const HOLD_STILL_MS = 1400;
+const CALIBRATION_MS = 2500;
+const PREDICTION_VOTE_WINDOW = 10;
+const AUDIO_COOLDOWN_MS = 9000;
 const DEFAULT_SENSITIVITY: Sensitivity = {
   trunkAngle: 18,
   headDistance: 0.08,
   shoulderTilt: 0.05,
 };
+const DEFAULT_SILHOUETTE_METRICS: SilhouetteMetrics = {
+  neckForwardContour: 0,
+  upperBackCurvature: 0,
+  torsoOutlineAngle: 0,
+  silhouetteStability: 0,
+};
+
+type SideKind = "left" | "right";
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
@@ -91,6 +117,11 @@ function variance(arr: number[]) {
   const mean = avg(arr) ?? 0;
   const sq = arr.reduce((s, x) => s + (x - mean) * (x - mean), 0);
   return sq / arr.length;
+}
+
+function stabilityFromVariance(trunkVar: number) {
+  // Lower variance means steadier posture over the sequence window.
+  return Math.round(clamp(100 - trunkVar * 35, 0, 100));
 }
 
 function pushLimited(arr: number[], x: number) {
@@ -128,12 +159,105 @@ function headForwardSignedM(nose: Point3, midShoulder: Point3) {
   return (nose?.z ?? 0) - (midShoulder?.z ?? 0);
 }
 
+function headForwardSideNorm(nose: Point3, midShoulder: Point3) {
+  return Math.abs((nose?.x ?? 0) - (midShoulder?.x ?? 0));
+}
+
+function headForwardSideSignedNorm(nose: Point3, midShoulder: Point3) {
+  return (nose?.x ?? 0) - (midShoulder?.x ?? 0);
+}
+
 function shoulderTiltM(ls: Point3, rs: Point3) {
   return Math.abs((ls?.y ?? 0) - (rs?.y ?? 0));
 }
 
 function shoulderTiltSignedM(ls: Point3, rs: Point3) {
   return (ls?.y ?? 0) - (rs?.y ?? 0);
+}
+
+function planarDistance(a: Point3, b: Point3) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function torsoOutlineAngleDeg(shoulder: Point3, hip: Point3) {
+  return Math.abs((Math.atan2(shoulder.x - hip.x, hip.y - shoulder.y) * 180) / Math.PI);
+}
+
+function neckForwardContourNorm(nose: Point3, shoulder: Point3, hip: Point3) {
+  const torsoLen = Math.max(planarDistance(shoulder, hip), 1e-3);
+  return Math.abs(nose.x - shoulder.x) / torsoLen;
+}
+
+function pointLineDistanceNorm(point: Point3, lineStart: Point3, lineEnd: Point3) {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const denom = Math.max(Math.hypot(dx, dy), 1e-3);
+  const areaTwice = Math.abs(
+    dx * (lineStart.y - point.y) - (lineStart.x - point.x) * dy,
+  );
+  return areaTwice / denom / denom;
+}
+
+function upperBackCurvatureNorm(ear: Point3, shoulder: Point3, hip: Point3) {
+  return pointLineDistanceNorm(shoulder, ear, hip);
+}
+
+function silhouetteStabilityScore(
+  contourValues: number[],
+  curvatureValues: number[],
+  outlineValues: number[],
+) {
+  const contourVar = variance(contourValues) / 0.0025;
+  const curvatureVar = variance(curvatureValues) / 0.0025;
+  const outlineVar = variance(outlineValues) / 64;
+  return clamp(1 - (contourVar + curvatureVar + outlineVar) / 3, 0, 1);
+}
+
+function ema(prev: number | null, next: number, alpha = EMA_ALPHA) {
+  if (prev == null) return next;
+  return prev + alpha * (next - prev);
+}
+
+function visOk(
+  p?: {
+    x: number;
+    y: number;
+    z: number;
+    visibility?: number;
+  },
+  min = VIS_THRESHOLD,
+) {
+  return !!p && (p.visibility ?? 1) >= min;
+}
+
+function avgVisibility(
+  points: Array<{ visibility?: number } | undefined>,
+  min = VIS_THRESHOLD,
+) {
+  const valid = points.filter(Boolean) as Array<{ visibility?: number }>;
+  if (valid.length === 0) return 0;
+  const mean =
+    valid.reduce((s, p) => s + (p.visibility ?? 0), 0) / valid.length;
+  if (mean < min) return 0;
+  return mean;
+}
+
+function dominantSideFromNorm(
+  norm: { x: number; y: number; z: number; visibility?: number }[],
+): SideKind {
+  const lScore = avgVisibility([
+    norm[IDX.L_SHOULDER],
+    norm[IDX.L_HIP],
+    norm[IDX.L_EAR],
+    norm[IDX.L_EYE],
+  ]);
+  const rScore = avgVisibility([
+    norm[IDX.R_SHOULDER],
+    norm[IDX.R_HIP],
+    norm[IDX.R_EAR],
+    norm[IDX.R_EYE],
+  ]);
+  return lScore >= rScore ? "left" : "right";
 }
 
 function metricQuality(value: number, threshold: number) {
@@ -187,7 +311,6 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const poseRef = useRef<PoseLandmarker | null>(null);
-  const drawRef = useRef<DrawingUtils | null>(null);
   const rafRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -195,15 +318,62 @@ export default function App() {
   const lastFeedbackRef = useRef<string>("");
   const lastInferTsRef = useRef<number>(0);
   const inferInFlightRef = useRef<boolean>(false);
+  const lastAudioEventRef = useRef<{ key: string; at: number }>({
+    key: "",
+    at: 0,
+  });
+  const lastAnnouncedStateRef = useRef<"good" | "fix" | "idle">("idle");
+  const loadedModelPathRef = useRef<string | null>(null);
+  const landmarkerLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const holdStillStartRef = useRef<number>(0);
+  const calibrationRef = useRef<{
+    activeView: ViewCalibration | null;
+    startedAt: number;
+    done: Record<ViewCalibration, boolean>;
+  }>({
+    activeView: null,
+    startedAt: 0,
+    done: { front: false, side: false, back: false },
+  });
+  const emaRef = useRef<{
+    trunk: number | null;
+    head: number | null;
+    shoulder: number | null;
+    contour: number | null;
+    curvature: number | null;
+    outline: number | null;
+  }>({
+    trunk: null,
+    head: null,
+    shoulder: null,
+    contour: null,
+    curvature: null,
+    outline: null,
+  });
+  const predictionVotesRef = useRef<boolean[]>([]);
+  const lastSmoothedRef = useRef<{
+    trunk: number;
+    head: number;
+    shoulder: number;
+    contour: number;
+    curvature: number;
+    outline: number;
+  } | null>(null);
 
   const buffersRef = useRef<{
     trunk: number[];
     head: number[];
     shoulder: number[];
+    contour: number[];
+    curvature: number[];
+    outline: number[];
   }>({
     trunk: [],
     head: [],
     shoulder: [],
+    contour: [],
+    curvature: [],
+    outline: [],
   });
 
   const [isActive, setIsActive] = useState(false);
@@ -224,11 +394,17 @@ export default function App() {
     headForward: 0,
     shoulderTilt: 0,
   });
+  const [silhouetteMetrics, setSilhouetteMetrics] = useState<SilhouetteMetrics>(
+    DEFAULT_SILHOUETTE_METRICS,
+  );
+  const [audioMode, setAudioMode] = useState<AudioMode>("voice");
 
   const [sensitivity, setSensitivity] = useState<Sensitivity>(
     DEFAULT_SENSITIVITY,
   );
-  const [orientation, setOrientation] = useState("Unknown");
+  const [stabilityScore, setStabilityScore] = useState(0);
+  const [trackingHealth, setTrackingHealth] = useState(0);
+  const overlayDetail: "detailed" = "detailed";
 
   const modelPath = useMemo(() => "/models/pose_landmarker_lite.task", []);
   const mlApiUrl = useMemo(
@@ -240,8 +416,29 @@ export default function App() {
     buffersRef.current.trunk = [];
     buffersRef.current.head = [];
     buffersRef.current.shoulder = [];
+    buffersRef.current.contour = [];
+    buffersRef.current.curvature = [];
+    buffersRef.current.outline = [];
     lastVideoTimeRef.current = -1;
     lastFeedbackRef.current = "";
+    holdStillStartRef.current = 0;
+    lastAudioEventRef.current = { key: "", at: 0 };
+    lastAnnouncedStateRef.current = "idle";
+    calibrationRef.current = {
+      activeView: null,
+      startedAt: 0,
+      done: { front: false, side: false, back: false },
+    };
+    emaRef.current = {
+      trunk: null,
+      head: null,
+      shoulder: null,
+      contour: null,
+      curvature: null,
+      outline: null,
+    };
+    lastSmoothedRef.current = null;
+    predictionVotesRef.current = [];
   }, []);
 
   const stop = useCallback(() => {
@@ -255,6 +452,10 @@ export default function App() {
 
     if (videoRef.current) videoRef.current.srcObject = null;
 
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+
     const c = canvasRef.current;
     if (c) c.getContext("2d")?.clearRect(0, 0, c.width, c.height);
 
@@ -265,28 +466,46 @@ export default function App() {
     setScore(0);
     setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
     setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-    setOrientation("Unknown");
+    setSilhouetteMetrics(DEFAULT_SILHOUETTE_METRICS);
+    setStabilityScore(0);
+    setTrackingHealth(0);
     resetBuffers();
   }, [resetBuffers]);
 
   const ensureLandmarker = useCallback(async () => {
-    if (poseRef.current) return;
+    if (poseRef.current && loadedModelPathRef.current === modelPath) return;
+    if (landmarkerLoadPromiseRef.current) return landmarkerLoadPromiseRef.current;
+    poseRef.current = null;
+    loadedModelPathRef.current = null;
 
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm",
-    );
+    landmarkerLoadPromiseRef.current = (async () => {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm",
+      );
 
-    poseRef.current = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: modelPath, delegate: "GPU" },
-      runningMode: "VIDEO",
-      numPoses: 1,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
+      poseRef.current = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: modelPath, delegate: "GPU" },
+        runningMode: "VIDEO",
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+      loadedModelPathRef.current = modelPath;
+    })();
+
+    try {
+      await landmarkerLoadPromiseRef.current;
+    } catch (error) {
+      poseRef.current = null;
+      loadedModelPathRef.current = null;
+      throw error;
+    } finally {
+      landmarkerLoadPromiseRef.current = null;
+    }
   }, [modelPath]);
 
-  const computeDecision = useCallback(() => {
+  const computeDecision = useCallback((thresholds?: Sensitivity) => {
     const t = avg(buffersRef.current.trunk);
     const h = avg(buffersRef.current.head);
     const s = avg(buffersRef.current.shoulder);
@@ -302,9 +521,12 @@ export default function App() {
       };
     }
 
-    const tRatio = t / sensitivity.trunkAngle;
-    const hRatio = h / sensitivity.headDistance;
-    const sRatio = s / sensitivity.shoulderTilt;
+    const tThr = thresholds?.trunkAngle ?? sensitivity.trunkAngle;
+    const hThr = thresholds?.headDistance ?? sensitivity.headDistance;
+    const sThr = thresholds?.shoulderTilt ?? sensitivity.shoulderTilt;
+    const tRatio = t / tThr;
+    const hRatio = h / hThr;
+    const sRatio = s / sThr;
     const worst = Math.max(tRatio, hRatio, sRatio);
 
     const nextScore = Math.round(clamp(100 - (worst - 1) * 45, 0, 100));
@@ -326,7 +548,13 @@ export default function App() {
   ]);
 
   const pushFeedback = useCallback(
-    (scoreValue: number, msg: string, t: number, h: number) => {
+    (
+      scoreValue: number,
+      msg: string,
+      t: number,
+      h: number,
+      headThreshold = sensitivity.headDistance,
+    ) => {
       if (lastFeedbackRef.current === msg) return;
       lastFeedbackRef.current = msg;
 
@@ -350,7 +578,7 @@ export default function App() {
         color = "text-rose-400";
         bg = "bg-rose-500/10 border-rose-500/20";
         text = msg;
-      } else if (h > sensitivity.headDistance) {
+      } else if (h > headThreshold) {
         type = "warning";
         title = "Head Forward Warning";
         color = "text-amber-400";
@@ -377,6 +605,10 @@ export default function App() {
       head_forward: number;
       shoulder_tilt: number;
       trunk_variance: number;
+      neck_forward_contour: number;
+      upper_back_curvature: number;
+      torso_outline_angle: number;
+      silhouette_stability: number;
     }): Promise<MlPrediction | null> => {
       if (!mlApiUrl || inferInFlightRef.current) return null;
 
@@ -404,41 +636,256 @@ export default function App() {
     [mlApiUrl],
   );
 
-  const draw = useCallback((result: PoseLandmarkerResult) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    if (!drawRef.current) drawRef.current = new DrawingUtils(ctx);
-
-    ctx.save();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const landmarks = result.landmarks?.[0];
-    if (landmarks) {
-      drawRef.current.drawConnectors(
-        landmarks,
-        PoseLandmarker.POSE_CONNECTIONS,
-        {
-          color: "#22d3ee",
-          lineWidth: 2,
-        },
-      );
-      drawRef.current.drawLandmarks(landmarks, {
-        radius: 3,
-        color: "#e2e8f0",
-        lineWidth: 1,
-      });
+  const applyPredictionVote = useCallback((ok: boolean) => {
+    predictionVotesRef.current.push(ok);
+    if (predictionVotesRef.current.length > PREDICTION_VOTE_WINDOW) {
+      predictionVotesRef.current.shift();
     }
-
-    ctx.restore();
+    const good = predictionVotesRef.current.filter(Boolean).length;
+    const bad = predictionVotesRef.current.length - good;
+    return good >= bad;
   }, []);
+
+  const speakFeedback = useCallback(
+    (nextState: "good" | "fix", message: string, eventKey: string) => {
+      if (audioMode === "off") return;
+      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+      const now = Date.now();
+      const last = lastAudioEventRef.current;
+      const stateChanged = lastAnnouncedStateRef.current !== nextState;
+      if (!stateChanged && last.key === eventKey && now - last.at < AUDIO_COOLDOWN_MS) {
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.volume = 0.9;
+      window.speechSynthesis.speak(utterance);
+
+      lastAudioEventRef.current = { key: eventKey, at: now };
+      lastAnnouncedStateRef.current = nextState;
+    },
+    [audioMode],
+  );
+
+  const draw = useCallback(
+    (result: PoseLandmarkerResult) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const landmarks = result.landmarks?.[0];
+      const world = result.worldLandmarks?.[0];
+      if (landmarks && world) {
+        const orient = detectOrientation(world as Point3[], landmarks);
+        const dominantSide = dominantSideFromNorm(landmarks);
+        const neckNorm: Point3 = {
+          x: (landmarks[IDX.L_SHOULDER].x + landmarks[IDX.R_SHOULDER].x) / 2,
+          y: (landmarks[IDX.L_SHOULDER].y + landmarks[IDX.R_SHOULDER].y) / 2,
+          z: 0,
+        };
+        const sidePrimary =
+          dominantSide === "left"
+            ? {
+                shoulder: IDX.L_SHOULDER,
+                hip: IDX.L_HIP,
+                ear: IDX.L_EAR,
+                eye: IDX.L_EYE,
+                elbow: IDX.L_ELBOW,
+              }
+            : {
+                shoulder: IDX.R_SHOULDER,
+                hip: IDX.R_HIP,
+                ear: IDX.R_EAR,
+                eye: IDX.R_EYE,
+                elbow: IDX.R_ELBOW,
+              };
+
+        type NodeRef = number | Point3;
+        let nodes: NodeRef[] = [];
+        let links: Array<[NodeRef, NodeRef]> = [];
+
+        if (orient.kind === "front") {
+          nodes =
+            overlayDetail === "detailed"
+              ? [
+                  IDX.NOSE,
+                  IDX.L_EYE,
+                  IDX.R_EYE,
+                  IDX.L_EAR,
+                  IDX.R_EAR,
+                  IDX.L_SHOULDER,
+                  IDX.R_SHOULDER,
+                  IDX.L_ELBOW,
+                  IDX.R_ELBOW,
+                  IDX.L_HIP,
+                  IDX.R_HIP,
+                ]
+              : [
+                  IDX.NOSE,
+                  IDX.L_EAR,
+                  IDX.R_EAR,
+                  IDX.L_SHOULDER,
+                  IDX.R_SHOULDER,
+                  IDX.L_HIP,
+                  IDX.R_HIP,
+                ];
+          links =
+            overlayDetail === "detailed"
+              ? [
+                  [IDX.NOSE, IDX.L_EYE],
+                  [IDX.NOSE, IDX.R_EYE],
+                  [IDX.L_EYE, IDX.L_EAR],
+                  [IDX.R_EYE, IDX.R_EAR],
+                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
+                  [IDX.L_SHOULDER, IDX.L_ELBOW],
+                  [IDX.R_SHOULDER, IDX.R_ELBOW],
+                  [IDX.L_SHOULDER, IDX.L_HIP],
+                  [IDX.R_SHOULDER, IDX.R_HIP],
+                  [IDX.L_HIP, IDX.R_HIP],
+                ]
+              : [
+                  [IDX.NOSE, IDX.L_EAR],
+                  [IDX.NOSE, IDX.R_EAR],
+                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
+                  [IDX.L_SHOULDER, IDX.L_HIP],
+                  [IDX.R_SHOULDER, IDX.R_HIP],
+                  [IDX.L_HIP, IDX.R_HIP],
+                ];
+        } else if (orient.kind === "side_left" || orient.kind === "side_right") {
+          nodes =
+            overlayDetail === "detailed"
+              ? [
+                  IDX.NOSE,
+                  sidePrimary.eye,
+                  sidePrimary.ear,
+                  neckNorm,
+                  IDX.L_SHOULDER,
+                  IDX.R_SHOULDER,
+                  sidePrimary.shoulder,
+                  IDX.L_HIP,
+                  IDX.R_HIP,
+                  sidePrimary.elbow,
+                  sidePrimary.hip,
+                ]
+              : [IDX.NOSE, sidePrimary.ear, sidePrimary.shoulder, sidePrimary.hip];
+          links =
+            overlayDetail === "detailed"
+              ? [
+                  [IDX.NOSE, sidePrimary.eye],
+                  [sidePrimary.eye, sidePrimary.ear],
+                  [sidePrimary.ear, neckNorm],
+                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
+                  [IDX.NOSE, neckNorm],
+                  [neckNorm, sidePrimary.shoulder],
+                  [IDX.L_HIP, IDX.R_HIP],
+                  [sidePrimary.shoulder, sidePrimary.elbow],
+                  [sidePrimary.shoulder, sidePrimary.hip],
+                ]
+              : [
+                  [IDX.NOSE, sidePrimary.ear],
+                  [IDX.NOSE, sidePrimary.shoulder],
+                  [sidePrimary.shoulder, sidePrimary.hip],
+                ];
+        } else {
+          // Back or unknown
+          nodes =
+            overlayDetail === "detailed"
+              ? [
+                  IDX.L_SHOULDER,
+                  IDX.R_SHOULDER,
+                  IDX.L_ELBOW,
+                  IDX.R_ELBOW,
+                  IDX.L_HIP,
+                  IDX.R_HIP,
+                ]
+              : [IDX.L_SHOULDER, IDX.R_SHOULDER, IDX.L_HIP, IDX.R_HIP];
+          links =
+            overlayDetail === "detailed"
+              ? [
+                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
+                  [IDX.L_SHOULDER, IDX.L_ELBOW],
+                  [IDX.R_SHOULDER, IDX.R_ELBOW],
+                  [IDX.L_SHOULDER, IDX.L_HIP],
+                  [IDX.R_SHOULDER, IDX.R_HIP],
+                  [IDX.L_HIP, IDX.R_HIP],
+                ]
+              : [
+                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
+                  [IDX.L_SHOULDER, IDX.L_HIP],
+                  [IDX.R_SHOULDER, IDX.R_HIP],
+                  [IDX.L_HIP, IDX.R_HIP],
+                ];
+        }
+
+        const getPoint = (ref: NodeRef) => {
+          if (typeof ref === "number") return landmarks[ref];
+          return ref;
+        };
+        const isRefVisible = (ref: NodeRef) => {
+          if (typeof ref !== "number") return true;
+          return visOk(landmarks[ref], DRAW_VIS_THRESHOLD);
+        };
+
+        const drawNode = (ref: NodeRef) => {
+          const p = getPoint(ref);
+          if (!p) return;
+          if (!isRefVisible(ref)) return;
+          if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
+          const x = p.x * canvas.width;
+          const y = p.y * canvas.height;
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = "#e2e8f0";
+          ctx.fill();
+        };
+
+        const drawLink = (a: NodeRef, b: NodeRef) => {
+          const p1 = getPoint(a);
+          const p2 = getPoint(b);
+          if (!p1 || !p2) return;
+          if (!isRefVisible(a) || !isRefVisible(b)) return;
+          if (
+            p1.x < 0 ||
+            p1.x > 1 ||
+            p1.y < 0 ||
+            p1.y > 1 ||
+            p2.x < 0 ||
+            p2.x > 1 ||
+            p2.y < 0 ||
+            p2.y > 1
+          ) {
+            return;
+          }
+          ctx.beginPath();
+          ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+          ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+          ctx.strokeStyle = "#22d3ee";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        };
+
+        links.forEach(([a, b]) => drawLink(a, b));
+        nodes.forEach((idx) => drawNode(idx));
+      }
+
+      ctx.restore();
+    },
+    [overlayDetail],
+  );
 
   const process = useCallback(
     (result: PoseLandmarkerResult) => {
       const world = result.worldLandmarks?.[0];
+      const norm = result.landmarks?.[0];
       if (!world) {
         setPill("detecting");
         setFeedback("Make sure your upper body is visible.");
@@ -450,21 +897,90 @@ export default function App() {
       const rs = world[IDX.R_SHOULDER];
       const lh = world[IDX.L_HIP];
       const rh = world[IDX.R_HIP];
-      if (!nose || !ls || !rs || !lh || !rh) return;
+      const noseN = norm?.[IDX.NOSE];
+      const leN = norm?.[IDX.L_EYE];
+      const reN = norm?.[IDX.R_EYE];
+      const lEarN = norm?.[IDX.L_EAR];
+      const rEarN = norm?.[IDX.R_EAR];
+      const lsN = norm?.[IDX.L_SHOULDER];
+      const rsN = norm?.[IDX.R_SHOULDER];
+      const lhN = norm?.[IDX.L_HIP];
+      const rhN = norm?.[IDX.R_HIP];
+      if (
+        !nose ||
+        !ls ||
+        !rs ||
+        !lh ||
+        !rh ||
+        !noseN ||
+        !lsN ||
+        !rsN ||
+        !lhN ||
+        !rhN ||
+        !lEarN ||
+        !rEarN ||
+        !leN ||
+        !reN
+      ) {
+        return;
+      }
 
-      const orient = detectOrientation(world as Point3[], result.landmarks?.[0]);
-      setOrientation(orient.label);
+      const health = Math.round(
+        avgVisibility([noseN, lsN, rsN, lhN, rhN, lEarN, rEarN, leN, reN]) * 100,
+      );
+      setTrackingHealth(health);
 
-      if (orient.kind !== "front") {
+      if (!visOk(noseN) || !visOk(lsN) || !visOk(rsN) || health < 45) {
+        setPill("detecting");
+        setFeedback("Low landmark confidence. Improve lighting and hold still.");
+        return;
+      }
+
+      const orient = detectOrientation(world as Point3[], norm);
+      const isSide =
+        orient.kind === "side_left" || orient.kind === "side_right";
+      const isBack = orient.kind === "back";
+      const dominantSide = dominantSideFromNorm(norm);
+      const sidePrimaryNorm =
+        dominantSide === "left"
+          ? {
+              shoulder: lsN as Point3,
+              hip: lhN as Point3,
+              ear: lEarN as Point3,
+              eye: leN as Point3,
+            }
+          : {
+              shoulder: rsN as Point3,
+              hip: rhN as Point3,
+              ear: rEarN as Point3,
+              eye: reN as Point3,
+            };
+
+      if (orient.kind === "unknown") {
+        holdStillStartRef.current = 0;
+        lastSmoothedRef.current = null;
         setPill("detecting");
         setScore(0);
         setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
         setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setFeedback(
-          orient.kind === "back"
-            ? "Back view detected. Face the camera for accurate tracking."
-            : "Side view detected. Face the camera for accurate tracking.",
-        );
+        setSilhouetteMetrics(DEFAULT_SILHOUETTE_METRICS);
+        setStabilityScore(0);
+        setFeedback("Adjust your position so shoulders and hips are clearly visible.");
+        return;
+      }
+
+      const frontVisibleCount = [
+        visOk(noseN),
+        visOk(lsN),
+        visOk(rsN),
+        visOk(lhN),
+        visOk(rhN),
+        visOk(lEarN),
+        visOk(rEarN),
+      ].filter(Boolean).length;
+      if (!isSide && frontVisibleCount < 5) {
+        setPill("detecting");
+        setFeedback("Partial front view detected. Keep head, shoulders, and hips visible.");
         return;
       }
 
@@ -478,60 +994,261 @@ export default function App() {
         y: (lh.y + rh.y) / 2,
         z: (lh.z + rh.z) / 2,
       };
+      const midShoulderNorm: Point3 = {
+        x: (lsN.x + rsN.x) / 2,
+        y: (lsN.y + rsN.y) / 2,
+        z: (lsN.z + rsN.z) / 2,
+      };
 
-      const tDeg = trunkAngleDeg(midShoulder, midHip);
-      const hM = headForwardM(nose as Point3, midShoulder);
-      const sM = shoulderTiltM(ls as Point3, rs as Point3);
+      const tRaw = trunkAngleDeg(midShoulder, midHip);
+      let hRaw = headForwardM(nose as Point3, midShoulder);
+      if (isSide) {
+        const sideVisibleCount = [
+          visOk(noseN),
+          visOk(sidePrimaryNorm.eye as { x: number; y: number; z: number; visibility?: number }),
+          visOk(sidePrimaryNorm.ear as { x: number; y: number; z: number; visibility?: number }),
+          visOk(sidePrimaryNorm.shoulder as { x: number; y: number; z: number; visibility?: number }),
+          visOk(sidePrimaryNorm.hip as { x: number; y: number; z: number; visibility?: number }),
+        ].filter(Boolean).length;
+        if (sideVisibleCount < 4) {
+          setPill("detecting");
+          setFeedback("Partial side view detected. Keep head, shoulder, and hip visible.");
+          return;
+        }
+        const sideHip = sidePrimaryNorm.hip;
+        if (!visOk(sideHip as { x: number; y: number; z: number; visibility?: number })) {
+          setPill("detecting");
+          setFeedback("Keep shoulder and hip visible for side-view analysis.");
+          return;
+        }
+        const neckNorm: Point3 = {
+          x: (lsN.x + rsN.x) / 2,
+          y: (lsN.y + rsN.y) / 2,
+          z: 0,
+        };
+        const torsoLen = Math.hypot(
+          sidePrimaryNorm.shoulder.x - sideHip.x,
+          sidePrimaryNorm.shoulder.y - sideHip.y,
+        );
+        hRaw = headForwardSideNorm(noseN as Point3, neckNorm) / Math.max(torsoLen, 1e-3);
+      } else if (isBack) {
+        // Back view has no reliable forward-head estimate from face landmarks.
+        hRaw = 0;
+      }
+      const sRaw = shoulderTiltM(ls as Point3, rs as Point3);
+      const contourRaw = isSide
+        ? neckForwardContourNorm(
+            noseN as Point3,
+            sidePrimaryNorm.shoulder,
+            sidePrimaryNorm.hip,
+          )
+        : 0;
+      const curvatureRaw = isSide
+        ? upperBackCurvatureNorm(
+            sidePrimaryNorm.ear,
+            sidePrimaryNorm.shoulder,
+            sidePrimaryNorm.hip,
+          )
+        : 0;
+      const outlineRaw = isSide
+        ? torsoOutlineAngleDeg(sidePrimaryNorm.shoulder, sidePrimaryNorm.hip)
+        : 0;
+
+      let tDeg = ema(emaRef.current.trunk, tRaw);
+      let hM = ema(emaRef.current.head, hRaw);
+      let sM = ema(emaRef.current.shoulder, sRaw);
+      const contour = ema(emaRef.current.contour, contourRaw);
+      const curvature = ema(emaRef.current.curvature, curvatureRaw);
+      const outline = ema(emaRef.current.outline, outlineRaw);
+      emaRef.current = {
+        trunk: tDeg,
+        head: hM,
+        shoulder: sM,
+        contour,
+        curvature,
+        outline,
+      };
       const tSigned = trunkAngleSignedDeg(midShoulder, midHip);
-      const hSigned = headForwardSignedM(nose as Point3, midShoulder);
+      const hSigned = isSide
+        ? headForwardSideSignedNorm(noseN as Point3, midShoulderNorm)
+        : headForwardSignedM(nose as Point3, midShoulder);
       const sSigned = shoulderTiltSignedM(ls as Point3, rs as Point3);
+
+      const now = performance.now();
+      const currentView: ViewCalibration = isSide
+        ? "side"
+        : isBack
+          ? "back"
+          : "front";
+      if (!calibrationRef.current.done[currentView]) {
+        if (calibrationRef.current.activeView !== currentView) {
+          calibrationRef.current.activeView = currentView;
+          calibrationRef.current.startedAt = 0;
+        }
+
+        if (calibrationRef.current.startedAt === 0) {
+          calibrationRef.current.startedAt = now;
+        }
+        const elapsed = now - calibrationRef.current.startedAt;
+        const viewLabel =
+          currentView === "front"
+            ? "Front view"
+            : currentView === "side"
+              ? "Side view"
+              : "Back view";
+        if (elapsed < CALIBRATION_MS) {
+          const pct = Math.round(clamp((elapsed / CALIBRATION_MS) * 100, 0, 100));
+          setPill("detecting");
+          setFeedback(`Calibrating ${viewLabel}... ${pct}%`);
+          return;
+        }
+
+        calibrationRef.current.done[currentView] = true;
+        calibrationRef.current.startedAt = 0;
+        setFeedback(`${viewLabel} calibrated. Monitoring posture.`);
+        return;
+      }
 
       pushLimited(buffersRef.current.trunk, tDeg);
       pushLimited(buffersRef.current.head, hM);
       pushLimited(buffersRef.current.shoulder, sM);
+      pushLimited(buffersRef.current.contour, contour);
+      pushLimited(buffersRef.current.curvature, curvature);
+      pushLimited(buffersRef.current.outline, outline);
+      const trunkVar = variance(buffersRef.current.trunk);
+      const silhouetteStability = isSide
+        ? silhouetteStabilityScore(
+            buffersRef.current.contour,
+            buffersRef.current.curvature,
+            buffersRef.current.outline,
+          )
+        : 0;
+      setStabilityScore(stabilityFromVariance(trunkVar));
+      const prevSmoothed = lastSmoothedRef.current;
+      if (prevSmoothed) {
+        const moved =
+          Math.abs(tDeg - prevSmoothed.trunk) > 1.8 ||
+          Math.abs(hM - prevSmoothed.head) > 0.02 ||
+          Math.abs(sM - prevSmoothed.shoulder) > 0.01 ||
+          Math.abs(contour - prevSmoothed.contour) > 0.025 ||
+          Math.abs(curvature - prevSmoothed.curvature) > 0.025 ||
+          Math.abs(outline - prevSmoothed.outline) > 2;
+        if (moved) holdStillStartRef.current = 0;
+      }
+      lastSmoothedRef.current = {
+        trunk: tDeg,
+        head: hM,
+        shoulder: sM,
+        contour,
+        curvature,
+        outline,
+      };
+      if (holdStillStartRef.current === 0) holdStillStartRef.current = now;
+      const holdReady = now - holdStillStartRef.current >= HOLD_STILL_MS;
 
-      const d = computeDecision();
+      const effectiveSensitivity: Sensitivity = isSide
+        ? {
+            trunkAngle: sensitivity.trunkAngle * 0.82,
+            headDistance: sensitivity.headDistance * 1.2,
+            shoulderTilt: sensitivity.shoulderTilt * 1.1,
+          }
+        : isBack
+          ? {
+              trunkAngle: sensitivity.trunkAngle,
+              headDistance: 999, // ignored in back-view local decision
+              shoulderTilt: sensitivity.shoulderTilt * 0.9,
+            }
+          : sensitivity;
+
+      const d = computeDecision(effectiveSensitivity);
       setMetrics({ trunkAngle: tDeg, headForward: hM, shoulderTilt: sM });
       setSignedMetrics({
         trunkAngle: tSigned,
         headForward: hSigned,
         shoulderTilt: sSigned,
       });
+      setSilhouetteMetrics({
+        neckForwardContour: isSide ? contour : 0,
+        upperBackCurvature: isSide ? curvature : 0,
+        torsoOutlineAngle: isSide ? outline : 0,
+        silhouetteStability,
+      });
 
-      const nextScore = d.score ?? 0;
-      setScore(nextScore);
-      setFeedback(d.msg);
-      setPill(d.ok ? "good" : "fix");
-
-      if (d.t != null && d.h != null) {
-        pushFeedback(nextScore, d.msg, d.t, d.h);
+      if (!holdReady) {
+        setPill("detecting");
+        setFeedback("Hold still for stable reading...");
+        return;
       }
 
-      if (d.t != null && d.h != null && d.s != null) {
+      const nextScore = d.score ?? 0;
+      const votedOk = applyPredictionVote(d.ok);
+      setScore(nextScore);
+      setFeedback(d.msg);
+      setPill(votedOk ? "good" : "fix");
+      const stablePrompt =
+        isSide && votedOk
+          ? "Side view stable. Keep head aligned with your torso."
+          : isBack && votedOk
+            ? "Back view stable. Keep shoulders level and back upright."
+            : d.msg;
+      if (votedOk) {
+        speakFeedback("good", "Good posture.", "good");
+      } else {
+        speakFeedback("fix", stablePrompt, stablePrompt);
+      }
+      if (isSide && votedOk) {
+        setFeedback("Side view stable. Keep head aligned with your torso.");
+      } else if (isBack && votedOk) {
+        setFeedback("Back view stable. Keep shoulders level and back upright.");
+      }
+
+      if (d.t != null && d.h != null) {
+        const logMsg =
+          isSide && votedOk
+            ? "Side view stable. Keep head aligned with your torso."
+            : isBack && votedOk
+              ? "Back view stable. Keep shoulders level and back upright."
+            : d.msg;
+        pushFeedback(nextScore, logMsg, d.t, d.h, effectiveSensitivity.headDistance);
+      }
+
+      if (!isBack && d.t != null && d.h != null && d.s != null) {
         const dT = d.t;
         const dH = d.h;
         const dS = d.s;
-        const trunkVar = variance(buffersRef.current.trunk);
         void inferMl({
           trunk_angle: dT,
           head_forward: dH,
           shoulder_tilt: dS,
           trunk_variance: trunkVar,
+          neck_forward_contour: isSide ? contour : 0,
+          upper_back_curvature: isSide ? curvature : 0,
+          torso_outline_angle: isSide ? outline : 0,
+          silhouette_stability: silhouetteStability,
         }).then((pred) => {
           if (!pred) return;
 
           const mlOk = pred.label === "proper";
+          const votedMlOk = applyPredictionVote(mlOk);
           const mlScore = Math.round(clamp(pred.confidence * 100, 0, 100));
           const mlMsg = pred.feedback || (mlOk ? "Good posture - keep it." : "Needs correction.");
+          const finalOk = d.ok ? votedMlOk : false;
+          const finalScore = d.ok ? Math.min(nextScore, mlScore) : nextScore;
+          const finalMsg = d.ok ? mlMsg : d.msg;
 
-          setScore(mlScore);
-          setFeedback(mlMsg);
-          setPill(mlOk ? "good" : "fix");
-          pushFeedback(mlScore, mlMsg, dT, dH);
+          setScore(finalScore);
+          setFeedback(finalMsg);
+          setPill(finalOk ? "good" : "fix");
+          if (finalOk) {
+            speakFeedback("good", "Good posture.", "good");
+          } else {
+            speakFeedback("fix", finalMsg, finalMsg);
+          }
+          pushFeedback(finalScore, finalMsg, dT, dH);
         });
       }
     },
-    [computeDecision, inferMl, pushFeedback],
+    [applyPredictionVote, computeDecision, inferMl, pushFeedback, speakFeedback],
   );
 
   const loop = useCallback(
@@ -564,8 +1281,9 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "user" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 960 },
+          height: { ideal: 540 },
+          frameRate: { ideal: 30, max: 30 },
         },
         audio: false,
       });
@@ -603,6 +1321,19 @@ export default function App() {
   }, [feedbacks]);
 
   useEffect(() => stop, [stop]);
+
+  useEffect(() => {
+    if (audioMode !== "off") return;
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  }, [audioMode]);
+
+  useEffect(() => {
+    void ensureLandmarker().catch((error) => {
+      console.error("Pose preload failed:", error);
+    });
+  }, [ensureLandmarker]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -809,24 +1540,35 @@ export default function App() {
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-white/20 border-dashed rounded-full" />
               </div>
 
+              <div className="absolute left-6 bottom-6 z-20">
+                <div className="text-sm font-bold text-white uppercase tracking-wider">
+                  Stability {stabilityScore}%
+                </div>
+                <div className="text-[11px] font-semibold text-white/75 uppercase tracking-wider">
+                  Tracking {trackingHealth}%
+                </div>
+                <div className="text-[11px] font-semibold text-white/55 uppercase tracking-wider">
+                  Silhouette {Math.round(silhouetteMetrics.silhouetteStability * 100)}%
+                </div>
+              </div>
+
               <div className="absolute right-4 top-4 bottom-4 w-72 lg:w-80 bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl flex flex-col overflow-hidden z-30 shadow-2xl">
                 <div className="px-5 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Bell size={16} className="text-white/90" />
-                  <h3 className="font-bold text-sm text-white uppercase tracking-wider">
-                    Session Log
-                  </h3>
-                  <span className="text-[10px] uppercase tracking-wider text-white/50">
-                    {orientation}
-                  </span>
-                </div>
-                  <button
-                    onClick={() => setShowSettings((v) => !v)}
-                    className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white  hover:text-black"
-                    title="Toggle Calibration Settings"
-                  >
-                    <Settings2 size={16} />
-                  </button>
+                    <h3 className="font-bold text-sm text-white uppercase tracking-wider">
+                      Session Log
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowSettings((v) => !v)}
+                      className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white  hover:text-black"
+                      title="Toggle Calibration Settings"
+                    >
+                      <Settings2 size={16} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full">
@@ -956,6 +1698,35 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+                </div>
+
+                <div className="mt-8 space-y-3">
+                  <div className="flex justify-between items-center px-1">
+                    <label className="text-xs font-semibold text-white/60">
+                      Audio Feedback
+                    </label>
+                    <span className="text-[10px] font-bold text-white/35 uppercase tracking-wider">
+                      9s cooldown
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["off", "voice"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setAudioMode(mode)}
+                        className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                          audioMode === mode
+                            ? "border-white/40 bg-white text-black"
+                            : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+                        }`}
+                      >
+                        {mode === "off" ? "Off" : "Voice"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-white/40">
+                    Voice prompts play only on stable posture changes and are suppressed during calibration or weak tracking.
+                  </p>
                 </div>
 
                 <div className="mt-6">
