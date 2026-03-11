@@ -1,0 +1,4 @@
+interface:
+  display_name: "SukatLikod Dataset Eval"
+  short_description: "Dataset and eval guide for SukatLikod"
+  default_prompt: "Use $sukatlikod-dataset-eval to prepare posture datasets, check label quality, and review model evaluation changes for SukatLikod."

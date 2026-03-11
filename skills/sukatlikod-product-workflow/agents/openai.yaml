@@ -1,0 +1,4 @@
+interface:
+  display_name: "SukatLikod Workflow"
+  short_description: "Posture workflow guide for SukatLikod"
+  default_prompt: "Use $sukatlikod-product-workflow to implement or review SukatLikod capture, inference, and feedback behavior."

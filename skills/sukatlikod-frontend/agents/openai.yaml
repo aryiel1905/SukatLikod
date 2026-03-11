@@ -1,0 +1,4 @@
+interface:
+  display_name: "SukatLikod Frontend"
+  short_description: "Frontend guide for SukatLikod UI"
+  default_prompt: "Use $sukatlikod-frontend to implement or review SukatLikod React UI, camera states, and posture result presentation."

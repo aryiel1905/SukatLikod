@@ -23,7 +23,7 @@ The frontend:
    - `head_forward`
    - `shoulder_tilt`
    - `trunk_variance`
-4. Sends these features to backend `/predict`.
+4. Sends these required features to backend `/predict`.
 5. Displays returned prediction and corrective feedback.
 
 ## 3. Backend Responsibilities
@@ -40,6 +40,9 @@ The backend:
    - label (`proper` or `needs_correction`)
    - confidence
    - feedback text
+
+Prediction contract note:
+- `trunk_variance` is required in the current v1 backend contract.
 
 ## 4. Training Pipeline
 

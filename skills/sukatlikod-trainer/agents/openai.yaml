@@ -1,0 +1,4 @@
+interface:
+  display_name: "SukatLikod Trainer"
+  short_description: "Training guide for SukatLikod ML"
+  default_prompt: "Use $sukatlikod-trainer to modify SukatLikod model training, feature lists, and training artifacts safely."

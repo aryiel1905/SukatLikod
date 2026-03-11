@@ -1,0 +1,4 @@
+interface:
+  display_name: "SukatLikod Backend"
+  short_description: "Backend guide for SukatLikod API"
+  default_prompt: "Use $sukatlikod-backend-fastapi to implement or review SukatLikod FastAPI inference routes, model loading, and prediction contracts."
