@@ -17,14 +17,15 @@ Think of it as:
 The frontend:
 
 1. Opens webcam stream.
-2. Runs MediaPipe Pose to get body landmarks.
-3. Computes posture features:
+2. Guides the user into a front-facing capture.
+3. Runs MediaPipe Pose to get body landmarks.
+4. Computes posture features:
    - `trunk_angle`
    - `head_forward`
    - `shoulder_tilt`
    - `trunk_variance`
-4. Sends these required features to backend `/predict`.
-5. Displays returned prediction and corrective feedback.
+5. Sends these required features to backend `/predict`.
+6. Displays returned prediction and corrective feedback.
 
 ## 3. Backend Responsibilities
 
@@ -74,11 +75,12 @@ Training uses **tabular features + labels**, not raw images directly.
 Live session flow:
 
 1. Webcam frame captured in frontend.
-2. Pose landmarks extracted.
-3. Numeric features computed.
-4. Features sent to backend `/predict`.
-5. Model predicts posture class.
-6. UI shows score + corrective message.
+2. Front-view framing is checked.
+3. Pose landmarks extracted.
+4. Numeric features computed.
+5. Features sent to backend `/predict`.
+6. Model predicts posture class.
+7. UI shows score + corrective message.
 
 ## 6. Deployment Architecture
 

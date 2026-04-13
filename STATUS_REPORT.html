@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SukatLikod — Thesis Status Report</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:       #1a1a2e;
+      --ink-light: #4a4a6a;
+      --accent:    #4f46e5;
+      --accent-bg: #eef2ff;
+      --green:     #16a34a;
+      --green-bg:  #f0fdf4;
+      --amber:     #d97706;
+      --amber-bg:  #fffbeb;
+      --red:       #dc2626;
+      --red-bg:    #fef2f2;
+      --border:    #e2e8f0;
+      --bg:        #ffffff;
+      --surface:   #f8fafc;
+      --radius:    8px;
+      --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    html { font-size: 15px; }
+
+    body {
+      font-family: var(--font);
+      color: var(--ink);
+      background: #f1f5f9;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    /* ── Page Shell ──────────────────────────────────── */
+    .page {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--bg);
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.08);
+      overflow: hidden;
+    }
+
+    /* ── Header ──────────────────────────────────────── */
+    .header {
+      background: var(--ink);
+      color: #fff;
+      padding: 2.5rem 2.5rem 2rem;
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .75rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 1rem;
+    }
+
+    .header-meta span { color: #64748b; }
+    .header-meta .dot { color: #334155; }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -.02em;
+      line-height: 1.2;
+    }
+
+    .header h1 em {
+      font-style: normal;
+      color: #818cf8;
+    }
+
+    .header-sub {
+      margin-top: .5rem;
+      font-size: .9rem;
+      color: #94a3b8;
+    }
+
+    .header-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-top: 1.25rem;
+    }
+
+    .tag {
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.12);
+      color: #cbd5e1;
+      font-size: .72rem;
+      font-weight: 600;
+      padding: .2rem .65rem;
+      border-radius: 99px;
+      letter-spacing: .04em;
+    }
+
+    /* ── Print Button ────────────────────────────────── */
+    .print-bar {
+      background: var(--accent-bg);
+      border-bottom: 1px solid #c7d2fe;
+      padding: .6rem 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .8rem;
+      color: var(--accent);
+    }
+
+    .btn-print {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: .4rem 1rem;
+      border-radius: 6px;
+      font-size: .8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-print:hover { background: #4338ca; }
+
+    /* ── Body Content ────────────────────────────────── */
+    .content { padding: 2rem 2.5rem 3rem; }
+
+    /* ── Section ─────────────────────────────────────── */
+    .section { margin-bottom: 2.25rem; }
+
+    .section-title {
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: .85rem;
+      padding-bottom: .4rem;
+      border-bottom: 2px solid var(--accent-bg);
+    }
+
+    /* ── Summary Cards ───────────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: .75rem;
+      margin-bottom: 1rem;
+    }
+
+    .summary-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .85rem 1rem;
+    }
+
+    .summary-card .label {
+      font-size: .7rem;
+      font-weight: 600;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--ink-light);
+      margin-bottom: .2rem;
+    }
+
+    .summary-card .value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .summary-card .sub {
+      font-size: .72rem;
+      color: var(--ink-light);
+      margin-top: .1rem;
+    }
+
+    /* ── Tables ──────────────────────────────────────── */
+    .tbl-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .84rem;
+    }
+
+    thead tr { background: var(--surface); }
+
+    th {
+      text-align: left;
+      padding: .6rem .9rem;
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--ink-light);
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: .55rem .9rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #fafafa; }
+
+    /* ── Status Pills ────────────────────────────────── */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .3rem;
+      font-size: .72rem;
+      font-weight: 600;
+      padding: .18rem .55rem;
+      border-radius: 99px;
+      white-space: nowrap;
+    }
+
+    .pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
+
+    .pill-green  { background: var(--green-bg);  color: var(--green);  } .pill-green::before  { background: var(--green); }
+    .pill-amber  { background: var(--amber-bg);  color: var(--amber);  } .pill-amber::before  { background: var(--amber); }
+    .pill-red    { background: var(--red-bg);    color: var(--red);    } .pill-red::before    { background: var(--red); }
+    .pill-blue   { background: var(--accent-bg); color: var(--accent); } .pill-blue::before   { background: var(--accent); }
+
+    /* ── Alignment Bar ───────────────────────────────── */
+    .align-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+    }
+
+    .align-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: .85rem;
+    }
+
+    .align-label {
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--ink-light);
+    }
+
+    .align-pct {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .progress-track {
+      height: 8px;
+      background: var(--border);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      transition: width .5s;
+    }
+
+    .align-notes {
+      margin-top: .75rem;
+      font-size: .78rem;
+      color: var(--ink-light);
+      line-height: 1.5;
+    }
+
+    /* ── Two-column list ─────────────────────────────── */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .4rem .75rem;
+      font-size: .84rem;
+    }
+
+    .two-col li {
+      list-style: none;
+      display: flex;
+      gap: .4rem;
+      align-items: flex-start;
+      line-height: 1.4;
+    }
+
+    .two-col li .icon { flex-shrink: 0; margin-top: .12rem; }
+
+    /* ── Next Steps ──────────────────────────────────── */
+    .steps-list { counter-reset: steps; }
+
+    .steps-list li {
+      counter-increment: steps;
+      list-style: none;
+      display: flex;
+      gap: .75rem;
+      align-items: flex-start;
+      padding: .55rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: .84rem;
+    }
+
+    .steps-list li:last-child { border-bottom: none; }
+
+    .steps-list li::before {
+      content: counter(steps);
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      background: var(--accent);
+      color: #fff;
+      font-size: .7rem;
+      font-weight: 700;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: .05rem;
+    }
+
+    /* ── Commits ─────────────────────────────────────── */
+    .commit-list { display: flex; flex-direction: column; gap: .35rem; }
+
+    .commit {
+      display: flex;
+      gap: .75rem;
+      align-items: flex-start;
+      font-size: .82rem;
+    }
+
+    .commit-hash {
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: .72rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: .1rem .4rem;
+      border-radius: 4px;
+      color: var(--ink-light);
+      flex-shrink: 0;
+      margin-top: .12rem;
+    }
+
+    /* ── Footer ──────────────────────────────────────── */
+    .footer {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 1rem 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: .75rem;
+      color: var(--ink-light);
+    }
+
+    /* ── Workflow ────────────────────────────────────── */
+    .workflow {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .wf-phase {
+      display: flex;
+      gap: 0;
+      align-items: stretch;
+    }
+
+    .wf-phase:last-child .wf-connector { display: none; }
+
+    .wf-spine {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+      width: 44px;
+    }
+
+    .wf-dot {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: .75rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 0 0 4px var(--accent-bg);
+      z-index: 1;
+    }
+
+    .wf-line {
+      width: 2px;
+      flex: 1;
+      background: var(--border);
+      margin: 4px 0;
+      min-height: 16px;
+    }
+
+    .wf-body {
+      flex: 1;
+      padding: .1rem 0 1.25rem 1rem;
+    }
+
+    .wf-title {
+      font-size: .88rem;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: .2rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .wf-title .wf-badge {
+      font-size: .65rem;
+      font-weight: 600;
+      padding: .1rem .45rem;
+      border-radius: 99px;
+      background: var(--accent-bg);
+      color: var(--accent);
+      letter-spacing: .04em;
+    }
+
+    .wf-desc {
+      font-size: .81rem;
+      color: var(--ink-light);
+      line-height: 1.55;
+    }
+
+    .wf-sub {
+      margin-top: .5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .35rem;
+    }
+
+    .wf-chip {
+      font-size: .7rem;
+      font-weight: 600;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--ink-light);
+      padding: .15rem .5rem;
+      border-radius: 4px;
+      font-family: 'Consolas', 'Courier New', monospace;
+    }
+
+    /* ── Demo Video ──────────────────────────────────── */
+    .demo-wrap {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .demo-wrap.has-video { border-style: solid; border-color: var(--accent); }
+
+    .demo-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: .65rem;
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: background .15s;
+    }
+
+    .demo-placeholder:hover { background: var(--accent-bg); }
+
+    .demo-placeholder.drag-over {
+      background: var(--accent-bg);
+      border-color: var(--accent);
+    }
+
+    .demo-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: var(--accent-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+    }
+
+    .demo-placeholder h3 {
+      font-size: .9rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .demo-placeholder p {
+      font-size: .78rem;
+      color: var(--ink-light);
+      max-width: 340px;
+      line-height: 1.5;
+    }
+
+    .demo-url-row {
+      display: flex;
+      gap: .5rem;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .demo-url-input {
+      flex: 1;
+      font-size: .78rem;
+      padding: .4rem .75rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      outline: none;
+      background: #fff;
+      color: var(--ink);
+      font-family: var(--font);
+    }
+
+    .demo-url-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,70,229,.1); }
+
+    .demo-url-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: .4rem .85rem;
+      border-radius: 6px;
+      font-size: .78rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .demo-url-btn:hover { background: #4338ca; }
+
+    .demo-video-el {
+      display: none;
+      width: 100%;
+      max-height: 420px;
+      background: #000;
+    }
+
+    .demo-video-el.visible { display: block; }
+
+    .demo-iframe {
+      display: none;
+      width: 100%;
+      aspect-ratio: 16/9;
+      border: none;
+    }
+
+    .demo-iframe.visible { display: block; }
+
+    .demo-caption {
+      padding: .6rem 1rem;
+      font-size: .75rem;
+      color: var(--ink-light);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .demo-reset {
+      font-size: .72rem;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .demo-reset:hover { text-decoration: underline; }
+
+    @media print {
+      .demo-wrap { break-inside: avoid; }
+      .demo-placeholder p { display: none; }
+      .demo-url-row { display: none; }
+    }
+
+    /* ── Print Styles ────────────────────────────────── */
+    @media print {
+      @page {
+        size: A4;
+        margin: 15mm 18mm;
+      }
+
+      body { background: #fff; padding: 0; }
+      .page { box-shadow: none; border-radius: 0; max-width: 100%; }
+      .print-bar { display: none; }
+      .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .pill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .progress-fill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+      .section { break-inside: avoid; }
+      .tbl-wrap { break-inside: avoid; }
+      .align-block { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-meta">
+      Thesis Output <span class="dot">·</span> Status Report <span class="dot">·</span> March 18, 2026
+    </div>
+    <h1>SukatLikod — <em>Posture Assessment System</em></h1>
+    <div class="header-sub">Guided Multi-View Back Posture Assessment from Monocular RGB Pose Sequences</div>
+    <div class="header-tags">
+      <span class="tag">React 19 · TypeScript</span>
+      <span class="tag">FastAPI · Python</span>
+      <span class="tag">MediaPipe Lite</span>
+      <span class="tag">RandomForest</span>
+      <span class="tag">Branch: main</span>
+    </div>
+  </div>
+
+  <!-- Print Bar -->
+  <div class="print-bar">
+    <span>Open in browser · File → Print → Save as PDF</span>
+    <button class="btn-print" onclick="window.print()">Save as PDF</button>
+  </div>
+
+  <div class="content">
+
+    <!-- Summary Cards -->
+    <div class="section">
+      <div class="section-title">At a Glance</div>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">Training Samples</div>
+          <div class="value">4,231</div>
+          <div class="sub">45% proper · 55% correction</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Model</div>
+          <div class="value">RF — 250 Trees</div>
+          <div class="sub">StandardScaler pipeline · 9.1 MB</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Thesis Alignment</div>
+          <div class="value">~80%</div>
+          <div class="sub">Front + Side complete · Back deferred</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Frontend</div>
+          <div class="value">1,985 lines</div>
+          <div class="sub">App.tsx — 277-line diff uncommitted</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Deployment</div>
+          <div class="value">Configured</div>
+          <div class="sub">Vercel (frontend) · Render (backend)</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Commits</div>
+          <div class="value">16 commits</div>
+          <div class="sub">7 development phases</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- System Workflow -->
+    <div class="section">
+      <div class="section-title">System Workflow</div>
+      <div class="workflow">
+
+        <div class="wf-phase">
+          <div class="wf-spine"><div class="wf-dot">1</div><div class="wf-line"></div></div>
+          <div class="wf-body">
+            <div class="wf-title">User Opens the Web App <span class="wf-badge">Browser</span></div>
+            <div class="wf-desc">The user visits the SukatLikod web app (Vercel-hosted). The browser requests camera access. Upon grant, the live webcam stream is initialized via the HTML5 Video API and fed into a canvas element for frame extraction.</div>
+            <div class="wf-sub">
+              <span class="wf-chip">getUserMedia()</span>
+              <span class="wf-chip">HTMLVideoElement</span>
+              <span class="wf-chip">React state: idle → detecting</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wf-phase">
+          <div class="wf-spine"><div class="wf-dot">2</div><div class="wf-line"></div></div>
+          <div class="wf-body">
+            <div class="wf-title">Pose Estimation via MediaPipe <span class="wf-badge">Vision ML</span></div>
+            <div class="wf-desc">Each video frame is passed to the MediaPipe Pose Landmarker Lite model (5.6 MB, loaded from <code>/public/models/</code>). It returns 33 3D body landmarks — including shoulders, hips, nose, ears, and elbows — with normalized (x, y, z) coordinates and visibility scores.</div>
+            <div class="wf-sub">
+              <span class="wf-chip">pose_landmarker_lite.task</span>
+              <span class="wf-chip">33 landmarks</span>
+              <span class="wf-chip">x · y · z + visibility</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wf-phase">
+          <div class="wf-spine"><div class="wf-dot">3</div><div class="wf-line"></div></div>
+          <div class="wf-body">
+            <div class="wf-title">Orientation Detection <span class="wf-badge">Frontend Logic</span></div>
+            <div class="wf-desc">The system classifies the user's camera orientation — <strong>front</strong>, <strong>side_left</strong>, <strong>side_right</strong>, or <strong>back</strong> — using landmark visibility patterns and depth ratios. A 12-frame voting window smooths rapid transitions. The UI displays guided instructions to help the user maintain the correct capture angle.</div>
+            <div class="wf-sub">
+              <span class="wf-chip">orientationVotesRef</span>
+              <span class="wf-chip">ORIENTATION_VOTE_WINDOW = 12</span>
+              <span class="wf-chip">smoothedOrientationLabel()</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wf-phase">
+          <div class="wf-spine"><div class="wf-dot">4</div><div class="wf-line"></div></div>
+          <div class="wf-body">
+            <div class="wf-title">Feature Extraction <span class="wf-badge">Signal Processing</span></div>
+            <div class="wf-desc">From the 33 landmarks, four posture features are computed per frame and accumulated in a 30-frame rolling buffer. Exponential Moving Average (EMA, α = 0.25) is applied to reduce noise before transmission to the backend.</div>
+            <div class="wf-sub">
+              <span class="wf-chip">trunk_angle</span>
+              <span class="wf-chip">head_forward</span>
+              <span class="wf-chip">shoulder_tilt</span>
+              <span class="wf-chip">trunk_variance</span>
+              <span class="wf-chip">EMA α=0.25</span>
+              <span class="wf-chip">30-frame buffer</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wf-phase">
+          <div class="wf-spine"><div class="wf-dot">5</div><div class="wf-line"></div></div>
+          <div class="wf-body">
+            <div class="wf-title">Backend Inference via FastAPI <span class="wf-badge">ML Server</span></div>
+            <div class="wf-desc">The smoothed feature vector is sent as a JSON POST to the <code>/predict</code> endpoint on the Render-hosted FastAPI server. A trained RandomForest pipeline (StandardScaler → RF, 250 estimators) classifies the posture as <strong>proper</strong> or <strong>needs_correction</strong>, along with per-class probabilities. A 7-frame server-side voting window adds further temporal stability.</div>
+            <div class="wf-sub">
+              <span class="wf-chip">POST /predict</span>
+              <span class="wf-chip">RandomForestClassifier</span>
+              <span class="wf-chip">7-frame voting</span>
+              <span class="wf-chip">confidence score 0–1</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wf-phase">
+          <div class="wf-spine"><div class="wf-dot">6</div><div class="wf-line"></div></div>
+          <div class="wf-body">
+            <div class="wf-title">Feedback &amp; Display <span class="wf-badge">UI Response</span></div>
+            <div class="wf-desc">The prediction response is rendered in real time on the dashboard: a posture score (0–100), confidence bar, color-coded metric cards, and a contextual text cue (e.g., "Straighten your back," "Bring your head back"). If posture is poor for more than 9 seconds, an optional audio alert fires. The user can adjust sensitivity thresholds via calibration sliders at any time.</div>
+            <div class="wf-sub">
+              <span class="wf-chip">posture score</span>
+              <span class="wf-chip">audio cooldown 9s</span>
+              <span class="wf-chip">sensitivity sliders</span>
+              <span class="wf-chip">pill: good / fix / error</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Demo Video -->
+    <div class="section">
+      <div class="section-title">Demo Video</div>
+      <div class="demo-wrap" id="demoWrap">
+        <div class="demo-placeholder" id="demoPlaceholder"
+          ondragover="event.preventDefault(); this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="handleDrop(event)">
+          <div class="demo-icon">▶</div>
+          <h3>Attach a Demo Video</h3>
+          <p>Drag and drop a video file here, or paste a YouTube / direct video URL below to embed the demo recording.</p>
+          <div class="demo-url-row" onclick="event.stopPropagation()">
+            <input class="demo-url-input" id="demoUrlInput" type="text" placeholder="https://youtube.com/watch?v=... or direct .mp4 URL" />
+            <button class="demo-url-btn" onclick="loadDemoUrl()">Embed</button>
+          </div>
+          <input type="file" id="demoFileInput" accept="video/*" style="display:none" onchange="handleFileInput(event)" />
+        </div>
+        <video class="demo-video-el" id="demoVideo" controls></video>
+        <iframe class="demo-iframe" id="demoIframe" allowfullscreen></iframe>
+        <div class="demo-caption" id="demoCaption" style="display:none">
+          <span id="demoCaptionText">SukatLikod — Live posture monitoring demo</span>
+          <button class="demo-reset" onclick="resetDemo()">Remove video</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer Status -->
+    <div class="section">
+      <div class="section-title">Layer Completion Status</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Frontend UI / UX</strong></td>
+              <td><span class="pill pill-green">Production</span></td>
+              <td>Responsive dark theme, calibration panel, audio feedback, metric cards</td>
+            </tr>
+            <tr>
+              <td><strong>Pose Estimation</strong></td>
+              <td><span class="pill pill-green">Production</span></td>
+              <td>MediaPipe Pose Landmarker Lite · 33 landmarks · 5.6 MB model</td>
+            </tr>
+            <tr>
+              <td><strong>Feature Extraction</strong></td>
+              <td><span class="pill pill-green">Production</span></td>
+              <td>4 core features · EMA smoothing (α=0.25) · 30-frame buffer</td>
+            </tr>
+            <tr>
+              <td><strong>Backend Inference</strong></td>
+              <td><span class="pill pill-green">Production</span></td>
+              <td>FastAPI /predict · 7-frame voting window · contextual feedback</td>
+            </tr>
+            <tr>
+              <td><strong>Training Pipeline</strong></td>
+              <td><span class="pill pill-green">Complete</span></td>
+              <td>CSV → StandardScaler → RF → joblib · legacy schema supported</td>
+            </tr>
+            <tr>
+              <td><strong>Multi-View Detection</strong></td>
+              <td><span class="pill pill-amber">Partial</span></td>
+              <td>Front + Side fully assessed · Back view detection only, not assessed</td>
+            </tr>
+            <tr>
+              <td><strong>Orientation Voting</strong></td>
+              <td><span class="pill pill-amber">Pending Test</span></td>
+              <td>12-frame window added in uncommitted diff · needs validation</td>
+            </tr>
+            <tr>
+              <td><strong>Silhouette Metrics</strong></td>
+              <td><span class="pill pill-red">Incomplete</span></td>
+              <td>8-feature schema defined · all 4 extended features zero-filled in training data</td>
+            </tr>
+            <tr>
+              <td><strong>Deployment Config</strong></td>
+              <td><span class="pill pill-green">Ready</span></td>
+              <td>CORS, .env, Vercel + Render target configured</td>
+            </tr>
+            <tr>
+              <td><strong>Documentation</strong></td>
+              <td><span class="pill pill-green">Comprehensive</span></td>
+              <td>8 guide documents + 5 modular skill files</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tech Stack -->
+    <div class="section">
+      <div class="section-title">Technology Stack</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Component</th><th>Technology</th><th>Version</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Frontend Framework</td><td>React + TypeScript</td><td>19.2.0 · 5.9.3</td></tr>
+            <tr><td>Build Tool</td><td>Vite</td><td>7.3.1</td></tr>
+            <tr><td>Pose Estimator</td><td>MediaPipe Tasks Vision</td><td>0.10.32 · Lite model</td></tr>
+            <tr><td>Backend Framework</td><td>FastAPI + Uvicorn</td><td>0.117.1 · 0.37.0</td></tr>
+            <tr><td>ML Classifier</td><td>scikit-learn RandomForest</td><td>1.7.2 · 250 estimators</td></tr>
+            <tr><td>Data Processing</td><td>pandas + NumPy</td><td>2.3.2 · 2.3.3</td></tr>
+            <tr><td>Model Serialization</td><td>joblib</td><td>1.5.2</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Dataset -->
+    <div class="section">
+      <div class="section-title">Dataset Overview</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>File</th><th>Samples</th><th>Balance</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>posture_dataset.csv</code> <span style="color:#94a3b8;font-size:.75rem">primary</span></td>
+              <td><strong>4,231</strong></td>
+              <td>45% proper · 55% correction</td>
+            </tr>
+            <tr>
+              <td><code>posture_dataset.balanced.csv</code></td>
+              <td>Resampled</td>
+              <td>50 / 50</td>
+            </tr>
+            <tr>
+              <td><code>posture_dataset.from_archives.csv</code></td>
+              <td>From raw frames</td>
+              <td>Varies</td>
+            </tr>
+            <tr>
+              <td><code>posture_dataset.from_reference.csv</code></td>
+              <td>From reference keypoints</td>
+              <td>Varies</td>
+            </tr>
+            <tr>
+              <td>Raw archive frames (JPG + JSON)</td>
+              <td>1,127 labeled</td>
+              <td>50 / 50 (perfect)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Implemented / Not Implemented -->
+    <div class="section">
+      <div class="section-title">Feature Coverage</div>
+      <ul class="two-col">
+        <li><span class="icon">✅</span> Real-time webcam capture + frame processing</li>
+        <li><span class="icon">✅</span> MediaPipe 33-landmark pose detection</li>
+        <li><span class="icon">✅</span> Trunk angle, head forward, shoulder tilt, variance</li>
+        <li><span class="icon">✅</span> Orientation detection (front / side / back / unknown)</li>
+        <li><span class="icon">✅</span> EMA smoothing + 30-frame temporal buffer</li>
+        <li><span class="icon">✅</span> RandomForest inference with probability output</li>
+        <li><span class="icon">✅</span> Contextual feedback (dominant issue rule-based)</li>
+        <li><span class="icon">✅</span> Posture score display (0–100)</li>
+        <li><span class="icon">✅</span> Sensitivity calibration sliders</li>
+        <li><span class="icon">✅</span> Audio feedback with 9-second cooldown</li>
+        <li><span class="icon">✅</span> Vercel + Render deployment config</li>
+        <li><span class="icon">⚠️</span> Back-view detection (no assessment logic)</li>
+        <li><span class="icon">⚠️</span> Silhouette metrics (schema present, not trained)</li>
+        <li><span class="icon">⚠️</span> Orientation voting (added, not committed/tested)</li>
+        <li><span class="icon">❌</span> Session history / analytics</li>
+        <li><span class="icon">❌</span> User profiles / multi-user support</li>
+      </ul>
+    </div>
+
+    <!-- Uncommitted Changes -->
+    <div class="section">
+      <div class="section-title">Uncommitted Changes — src/App.tsx</div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Change</th><th>Detail</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>New type <code>DominantIssue</code></td>
+              <td><code>"trunk" | "head" | "shoulder" | null</code></td>
+            </tr>
+            <tr>
+              <td>Constant <code>ORIENTATION_VOTE_WINDOW</code></td>
+              <td>12-frame window for smoothed orientation decisions</td>
+            </tr>
+            <tr>
+              <td>Constant <code>HEAD_FORWARD_GRACE_RATIO</code></td>
+              <td>1.2× grace multiplier for more lenient head-forward tolerance</td>
+            </tr>
+            <tr>
+              <td>Default threshold change</td>
+              <td><code>headDistance</code> raised from 0.08 → 0.1 m</td>
+            </tr>
+            <tr>
+              <td>New function <code>smoothedOrientationLabel()</code></td>
+              <td>Maps raw orientation kind to front / side / back with null fallback</td>
+            </tr>
+            <tr>
+              <td>New ref <code>orientationVotesRef</code></td>
+              <td>Per-frame orientation vote history for stability</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Thesis Alignment -->
+    <div class="section">
+      <div class="section-title">Thesis Alignment</div>
+      <div class="align-block">
+        <div class="align-header">
+          <div>
+            <div style="font-weight:700;font-size:.95rem">Overall Alignment Score</div>
+            <div class="align-label">vs. Thesis Claim: Guided multi-view posture assessment from monocular RGB using MediaPipe</div>
+          </div>
+          <div class="align-pct">~80%</div>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" style="width:80%"></div>
+        </div>
+        <div class="align-notes">
+          <strong>Aligned:</strong> Monocular RGB input · MediaPipe pose estimator · Temporal sequence features · Supervised RF classifier · Guided capture UI<br>
+          <strong>Partial:</strong> Multi-view — back view detected but not assessed · 8-feature model schema present but only 4 features trained<br>
+          <strong>Gap:</strong> No silhouette metric training signal · No held-out multi-view accuracy validation reported
+        </div>
+      </div>
+    </div>
+
+    <!-- Recommended Next Steps -->
+    <div class="section">
+      <div class="section-title">Recommended Next Steps</div>
+      <ol class="steps-list">
+        <li>Commit and test the pending <code>App.tsx</code> orientation voting changes before proceeding.</li>
+        <li>Implement back-view posture assessment logic to complete the multi-view thesis claim.</li>
+        <li>Populate silhouette metrics in training data to activate the full 8-feature model.</li>
+        <li>Audit dataset label consistency across all three source variants.</li>
+        <li>Run a held-out accuracy evaluation and include results in the thesis evaluation section.</li>
+        <li>Consider upgrading to MediaPipe Pose Landmarker Full/Heavy if accuracy is insufficient post-deployment.</li>
+      </ol>
+    </div>
+
+    <!-- Recent Commits -->
+    <div class="section">
+      <div class="section-title">Recent Commits</div>
+      <div class="commit-list">
+        <div class="commit"><span class="commit-hash">17a6790</span> fix(training): support legacy posture dataset schema</div>
+        <div class="commit"><span class="commit-hash">abf0ded</span> added new datasets</div>
+        <div class="commit"><span class="commit-hash">4bb01a2</span> feat(frontend): update live posture monitoring UI</div>
+        <div class="commit"><span class="commit-hash">13147a4</span> feat(data): add dataset preparation scripts and generated datasets</div>
+        <div class="commit"><span class="commit-hash">7cb9576</span> feat(backend): improve inference contract and training pipeline</div>
+        <div class="commit"><span class="commit-hash">37fd95e</span> docs: add SukatLikod docs and skill index</div>
+        <div class="commit"><span class="commit-hash">c537c35</span> chore: allow Vercel domain in backend CORS</div>
+        <div class="commit"><span class="commit-hash">6685084</span> initialize</div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>SukatLikod &mdash; Thesis Output · Branch: main · March 18, 2026</span>
+    <span>Generated by codebase scan · 56 files analyzed</span>
+  </div>
+
+</div><!-- /page -->
+
+<script>
+  function showVideo() {
+    document.getElementById('demoPlaceholder').style.display = 'none';
+    document.getElementById('demoWrap').classList.add('has-video');
+    document.getElementById('demoCaption').style.display = 'flex';
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('demoPlaceholder').classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('video/')) embedFile(file);
+  }
+
+  function handleFileInput(e) {
+    const file = e.target.files[0];
+    if (file) embedFile(file);
+  }
+
+  function embedFile(file) {
+    const url = URL.createObjectURL(file);
+    const vid = document.getElementById('demoVideo');
+    vid.src = url;
+    vid.classList.add('visible');
+    document.getElementById('demoCaptionText').textContent = file.name;
+    showVideo();
+  }
+
+  function loadDemoUrl() {
+    const raw = document.getElementById('demoUrlInput').value.trim();
+    if (!raw) return;
+
+    // YouTube
+    const ytMatch = raw.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{11})/);
+    if (ytMatch) {
+      const frame = document.getElementById('demoIframe');
+      frame.src = 'https://www.youtube.com/embed/' + ytMatch[1] + '?autoplay=0';
+      frame.classList.add('visible');
+      document.getElementById('demoCaptionText').textContent = 'YouTube — ' + raw;
+      showVideo();
+      return;
+    }
+
+    // Direct video URL
+    const vid = document.getElementById('demoVideo');
+    vid.src = raw;
+    vid.classList.add('visible');
+    document.getElementById('demoCaptionText').textContent = raw;
+    showVideo();
+  }
+
+  function resetDemo() {
+    const vid = document.getElementById('demoVideo');
+    const frame = document.getElementById('demoIframe');
+    vid.src = ''; vid.classList.remove('visible');
+    frame.src = ''; frame.classList.remove('visible');
+    document.getElementById('demoUrlInput').value = '';
+    document.getElementById('demoPlaceholder').style.display = 'flex';
+    document.getElementById('demoWrap').classList.remove('has-video');
+    document.getElementById('demoCaption').style.display = 'none';
+  }
+
+  // Click placeholder to pick file
+  document.getElementById('demoPlaceholder').addEventListener('click', function(e) {
+    if (e.target.closest('.demo-url-row')) return;
+    document.getElementById('demoFileInput').click();
+  });
+
+  // Enter key on URL input
+  document.getElementById('demoUrlInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') loadDemoUrl();
+  });
+</script>
+
+</body>
+</html>

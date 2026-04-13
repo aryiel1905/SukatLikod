@@ -49,12 +49,10 @@ The system should guide user posture capture rather than accept arbitrary framin
 
 ### Allowed capture modes
 - Front view
-- Side view
-- Back view
 
 ### MVP implementation scope
-- Required now: Front + Side
-- Deferred: Back view
+- Required now: Front view
+- Deferred: Side view, Back view
 
 ## 4. Pose Estimation Layer
 Use MediaPipe Pose Landmarker with key landmarks:
@@ -105,7 +103,6 @@ angle = deviation from vertical
 2. `head_forward`
 ```text
 front mode: abs(nose.z - shoulder_mid.z)
-side mode:  abs(nose.x - shoulder_mid.x) [normalized landmarks]
 ```
 
 3. `shoulder_tilt`
@@ -186,7 +183,7 @@ MVP is complete when the app can:
 ## 12. Measurable Acceptance Criteria
 1. `GET /health` returns `{"status":"ok"}` locally and in production.
 2. `POST /predict` accepts required v1 fields and returns label/confidence/feedback.
-3. Front view and side view both produce live inference (not blocked).
+3. Front view produces live inference (not blocked).
 4. Decisions are sequence-based (`WINDOW=30`), not single-frame only.
 5. Missing landmarks do not crash the session loop.
 6. Training run outputs held-out classification metrics.
@@ -198,7 +195,7 @@ Use this checklist against current code:
 1. Single RGB webcam input?
 2. Pose landmarks detected from live stream?
 3. Guided capture behavior present?
-4. Front + side supported for MVP inference?
+4. Front view supported for MVP inference?
 5. Sequence buffer used (`WINDOW=30`)?
 6. Required features computed (`trunk_angle`, `head_forward`, `shoulder_tilt`, `trunk_variance`)?
 7. Features sent to Python backend?

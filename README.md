@@ -5,10 +5,13 @@ SukatLikod is a posture-analysis prototype with a React/Vite frontend and a Pyth
 The current product flow is:
 
 1. capture webcam posture input
-2. extract pose landmarks and posture features
-3. send features to the backend classifier
-4. return `proper` or `needs_correction`
-5. show actionable feedback in the UI
+2. guide the user into a front-facing capture
+3. extract pose landmarks and posture features
+4. send features to the backend classifier
+5. return `proper` or `needs_correction`
+6. show actionable feedback in the UI
+
+Current active scope: front-view posture assessment only.
 
 ## Main Areas
 

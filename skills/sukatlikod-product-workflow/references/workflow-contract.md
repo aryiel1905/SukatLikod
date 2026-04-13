@@ -14,8 +14,8 @@
 
 ## MVP Capture Modes
 
-- Required now: Front, Side
-- Deferred: Back
+- Required now: Front
+- Deferred: Side, Back
 
 Prefer guided capture. Do not assume arbitrary framing is valid input.
 
