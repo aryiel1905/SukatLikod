@@ -98,6 +98,7 @@ type CameraDevice = {
   id: string;
   label: string;
 };
+type SpeechStatus = "unsupported" | "blocked" | "ready" | "loading";
 type DebugMetrics = {
   chinCenterOffset: number;
   chinForwardLean: number;
@@ -602,6 +603,8 @@ export default function App() {
     DEFAULT_SILHOUETTE_METRICS,
   );
   const [audioMode, setAudioMode] = useState<AudioMode>("voice");
+  const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("loading");
+  const [availableVoices, setAvailableVoices] = useState(0);
   const [cameraDevices, setCameraDevices] = useState<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
   const [assessmentTier, setAssessmentTier] = useState<FrontCaptureTier | null>(
@@ -1006,6 +1009,18 @@ export default function App() {
     }
   }, []);
 
+  const refreshSpeechSupport = useCallback(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setSpeechStatus("unsupported");
+      setAvailableVoices(0);
+      return;
+    }
+
+    const voices = window.speechSynthesis.getVoices();
+    setAvailableVoices(voices.length);
+    setSpeechStatus(voices.length > 0 ? "ready" : "loading");
+  }, []);
+
   const applyPredictionVote = useCallback((ok: boolean) => {
     predictionVotesRef.current.push(ok);
     if (predictionVotesRef.current.length > PREDICTION_VOTE_WINDOW) {
@@ -1019,8 +1034,10 @@ export default function App() {
   const speakFeedback = useCallback(
     (nextState: "good" | "fix", message: string, eventKey: string) => {
       if (audioMode === "off") return;
-      if (typeof window === "undefined" || !("speechSynthesis" in window))
+      if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+        setSpeechStatus("unsupported");
         return;
+      }
 
       const now = Date.now();
       const last = lastAudioEventRef.current;
@@ -1036,6 +1053,14 @@ export default function App() {
       window.speechSynthesis.resume();
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(message);
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        utterance.voice = voices[0];
+        setSpeechStatus("ready");
+        setAvailableVoices(voices.length);
+      } else {
+        setSpeechStatus("blocked");
+      }
       utterance.rate = 1;
       utterance.pitch = 1;
       utterance.volume = 0.9;
@@ -1863,6 +1888,25 @@ export default function App() {
   }, [audioMode]);
 
   useEffect(() => {
+    refreshSpeechSupport();
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      return;
+    }
+
+    const handleVoicesChanged = () => {
+      refreshSpeechSupport();
+    };
+
+    window.speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
+    return () => {
+      window.speechSynthesis.removeEventListener(
+        "voiceschanged",
+        handleVoicesChanged,
+      );
+    };
+  }, [refreshSpeechSupport]);
+
+  useEffect(() => {
     void ensureLandmarker().catch((error) => {
       console.error("Pose preload failed:", error);
     });
@@ -2432,6 +2476,32 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+                  <div className="flex justify-between items-center px-1 text-[11px] text-white/45">
+                    <span>
+                      Status:{" "}
+                      {speechStatus === "ready"
+                        ? "Ready"
+                        : speechStatus === "loading"
+                          ? "Loading voices"
+                          : speechStatus === "blocked"
+                            ? "No voice loaded"
+                            : "Unsupported"}
+                    </span>
+                    <span>{availableVoices} voice(s)</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setAudioMode("voice");
+                      speakFeedback(
+                        "good",
+                        "That looks good. Keep it there.",
+                        "test-voice",
+                      );
+                    }}
+                    className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white text-sm font-semibold py-2.5 transition-colors"
+                  >
+                    Test Voice
+                  </button>
                   <p className="text-[11px] leading-relaxed text-white/40">
                     Voice prompts play only on stable posture changes and are
                     suppressed during calibration or weak tracking.
