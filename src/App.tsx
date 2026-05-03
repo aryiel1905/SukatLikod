@@ -4,8 +4,10 @@
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ComponentType,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Camera,
   VideoOff,
@@ -19,6 +21,11 @@ import {
   X,
   PanelRightClose,
   PanelRightOpen,
+  Moon,
+  Sun,
+  Monitor,
+  Volume2,
+  BookOpen,
 } from "lucide-react";
 import {
   FilesetResolver,
@@ -60,7 +67,6 @@ type OrientationKind =
   | "side_left"
   | "side_right"
   | "unknown";
-type ViewCalibration = "front";
 type FrontCaptureTier = "full_front" | "upper_front";
 type BaselineMetrics = {
   trunk: number;
@@ -94,6 +100,7 @@ type SilhouetteMetrics = {
 };
 
 type AudioMode = "off" | "voice";
+type ThemeMode = "dark" | "light";
 type CameraDevice = {
   id: string;
   label: string;
@@ -125,12 +132,16 @@ type FeedbackPresentation = {
   audio: string;
 };
 
+type DocumentPictureInPictureApi = {
+  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
+  window?: Window | null;
+};
+
 const WINDOW = 30;
 const EMA_ALPHA = 0.25;
 const VIS_THRESHOLD = 0.35;
 const DRAW_VIS_THRESHOLD = 0.12;
 const HOLD_STILL_MS = 850;
-const CALIBRATION_MS = 2500;
 const PREDICTION_VOTE_WINDOW = 6;
 const AUDIO_COOLDOWN_MS = 5000;
 const HEAD_FORWARD_GRACE_RATIO = 1.2;
@@ -143,10 +154,10 @@ const UPPER_FRONT_HEAD_OFFSET_THRESHOLD = 0.18;
 const UPPER_FRONT_FORWARD_LEAN_THRESHOLD = 0.18;
 const UPPER_FRONT_FORWARD_LEAN_SEVERE = 0.45;
 const UPPER_FRONT_SHOULDER_TILT_THRESHOLD = 0.12;
-const UPPER_FRONT_CALIBRATION_MS = 3600;
 const UPPER_FRONT_TRACKING_MIN = 62;
 const UPPER_FRONT_FRAME_MARGIN = 0.08;
 const UPPER_FRONT_SCORE_CAP = 86;
+const THEME_STORAGE_KEY = "sukatlikod-theme";
 const DEFAULT_SENSITIVITY: Sensitivity = {
   trunkAngle: 18,
   headDistance: 0.1,
@@ -529,15 +540,8 @@ export default function App() {
   const loadedFaceModelPathRef = useRef<string | null>(null);
   const landmarkerLoadPromiseRef = useRef<Promise<void> | null>(null);
   const holdStillStartRef = useRef<number>(0);
-  const calibrationRef = useRef<{
-    activeView: ViewCalibration | null;
-    startedAt: number;
-    done: Record<ViewCalibration, boolean>;
-  }>({
-    activeView: null,
-    startedAt: 0,
-    done: { front: false },
-  });
+  const floatingWindowRef = useRef<Window | null>(null);
+  const floatingRootRef = useRef<HTMLDivElement | null>(null);
   const emaRef = useRef<{
     trunk: number | null;
     head: number | null;
@@ -582,8 +586,15 @@ export default function App() {
   const [isActive, setIsActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSessionLog, setShowSessionLog] = useState(true);
-  const [showDebugPanel, setShowDebugPanel] = useState(true);
+  const [showTutorial, setShowTutorial] = useState(true);
+  const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(false);
+  const [floatingWindowReady, setFloatingWindowReady] = useState(false);
   const [pill, setPill] = useState<Pill>("idle");
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === "undefined") return "dark";
+    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return storedTheme === "light" ? "light" : "dark";
+  });
 
   const [score, setScore] = useState(0);
   const [feedback, setFeedback] = useState("Press Start Session to begin.");
@@ -610,11 +621,9 @@ export default function App() {
   const [assessmentTier, setAssessmentTier] = useState<FrontCaptureTier | null>(
     null,
   );
-  const [debugMetrics, setDebugMetrics] =
-    useState<DebugMetrics>(DEFAULT_DEBUG_METRICS);
+  const [, setDebugMetrics] = useState<DebugMetrics>(DEFAULT_DEBUG_METRICS);
 
-  const [sensitivity, setSensitivity] =
-    useState<Sensitivity>(DEFAULT_SENSITIVITY);
+  const [sensitivity] = useState<Sensitivity>(DEFAULT_SENSITIVITY);
   const [stabilityScore, setStabilityScore] = useState(0);
   const [trackingHealth, setTrackingHealth] = useState(0);
   const overlayDetail = "detailed" as const;
@@ -645,11 +654,6 @@ export default function App() {
     baselineMetricsRef.current = {
       full_front: null,
       upper_front: null,
-    };
-    calibrationRef.current = {
-      activeView: null,
-      startedAt: 0,
-      done: { front: false },
     };
     emaRef.current = {
       trunk: null,
@@ -1532,44 +1536,17 @@ export default function App() {
           : (lsN.y - rsN.y) / shoulderWidth;
 
       const now = performance.now();
-      const currentView: ViewCalibration = "front";
-      if (!calibrationRef.current.done[currentView]) {
-        if (calibrationRef.current.activeView !== currentView) {
-          calibrationRef.current.activeView = currentView;
-          calibrationRef.current.startedAt = 0;
-        }
-
-        if (calibrationRef.current.startedAt === 0) {
-          calibrationRef.current.startedAt = now;
-        }
-        const elapsed = now - calibrationRef.current.startedAt;
-        const viewLabel = tierLabel;
-        const calibrationDuration =
-          captureTier === "upper_front"
-            ? UPPER_FRONT_CALIBRATION_MS
-            : CALIBRATION_MS;
-        if (elapsed < calibrationDuration) {
-          const pct = Math.round(
-            clamp((elapsed / calibrationDuration) * 100, 0, 100),
-          );
-          setPill("detecting");
-          setFeedback(
-            captureTier === "upper_front"
-              ? `Getting ready... ${pct}%. Sit tall and stay centered.`
-              : `Calibrating ${viewLabel}... ${pct}%`,
-          );
-          return;
-        }
-
-        calibrationRef.current.done[currentView] = true;
-        calibrationRef.current.startedAt = 0;
+      if (!baselineMetricsRef.current[captureTier]) {
         baselineMetricsRef.current[captureTier] = {
           trunk: tDeg,
           head: hM,
           shoulder: sM,
         };
-        setFeedback("Ready.");
-        return;
+        setFeedback(
+          captureTier === "upper_front"
+            ? "Tracking upper posture. Stay centered."
+            : `Tracking ${tierLabel}. Hold your position.`,
+        );
       }
 
       pushLimited(buffersRef.current.trunk, tDeg);
@@ -1677,7 +1654,7 @@ export default function App() {
             : "Looking good. Keep your head centered and shoulders level."
           : d.msg;
       if (votedOk) {
-        speakFeedback("good", stablePresentation.audio, `good-${currentView}`);
+        speakFeedback("good", stablePresentation.audio, `good-${captureTier}`);
       } else {
         speakFeedback("fix", stablePresentation.audio, stablePresentation.audio);
       }
@@ -1754,7 +1731,7 @@ export default function App() {
             speakFeedback(
               "good",
               finalPresentation.audio,
-              `good-${currentView}-ml`,
+              `good-${captureTier}-ml`,
             );
           } else {
             speakFeedback(
@@ -1851,11 +1828,98 @@ export default function App() {
     }
   }, [ensureLandmarker, loop, refreshCameraDevices, resetBuffers, selectedCameraId]);
 
+  const closeFloatingWindow = useCallback(() => {
+    floatingRootRef.current = null;
+    setFloatingWindowReady(false);
+
+    const pipWindow = floatingWindowRef.current;
+    floatingWindowRef.current = null;
+
+    if (pipWindow && !pipWindow.closed) {
+      pipWindow.close();
+    }
+  }, []);
+
+  const openFloatingWindow = useCallback(async () => {
+    if (typeof window === "undefined") return;
+
+    const pipApi = (
+      window as Window & {
+        documentPictureInPicture?: DocumentPictureInPictureApi;
+      }
+    ).documentPictureInPicture;
+
+    if (!pipApi?.requestWindow) return;
+
+    if (floatingWindowRef.current && !floatingWindowRef.current.closed) {
+      floatingWindowRef.current.focus();
+      setFloatingWindowReady(true);
+      return;
+    }
+
+    const pipWindow = await pipApi.requestWindow({
+      width: 320,
+      height: 220,
+    });
+
+    floatingWindowRef.current = pipWindow;
+    pipWindow.document.title = "SukatLikod Status";
+    pipWindow.document.body.innerHTML = "";
+    pipWindow.document.body.style.margin = "0";
+    pipWindow.document.body.style.minHeight = "100vh";
+    pipWindow.document.body.style.background = "transparent";
+    pipWindow.document.body.style.overflow = "hidden";
+
+    Array.from(document.querySelectorAll("style, link[rel='stylesheet']")).forEach(
+      (node) => {
+        pipWindow.document.head.appendChild(node.cloneNode(true));
+      },
+    );
+
+    const root = pipWindow.document.createElement("div");
+    root.id = "floating-status-root";
+    pipWindow.document.body.appendChild(root);
+    floatingRootRef.current = root;
+    setFloatingWindowReady(true);
+
+    pipWindow.addEventListener("pagehide", () => {
+      floatingWindowRef.current = null;
+      floatingRootRef.current = null;
+      setFloatingWindowReady(false);
+      setFloatingWindowEnabled(false);
+    });
+  }, []);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [feedbacks]);
 
   useEffect(() => stop, [stop]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    }
+    document.documentElement.style.colorScheme = theme;
+    document.body.style.background = theme === "dark" ? "#0a0a0c" : "#eef2f7";
+    if (floatingWindowRef.current?.document?.body) {
+      floatingWindowRef.current.document.body.style.background = "transparent";
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (floatingWindowEnabled) {
+      void openFloatingWindow().catch((error) => {
+        console.error("Floating window failed:", error);
+        setFloatingWindowEnabled(false);
+      });
+      return;
+    }
+
+    closeFloatingWindow();
+  }, [closeFloatingWindow, floatingWindowEnabled, openFloatingWindow]);
+
+  useEffect(() => closeFloatingWindow, [closeFloatingWindow]);
 
   useEffect(() => {
     void refreshCameraDevices();
@@ -1942,7 +2006,6 @@ export default function App() {
     if (s > 60) return "text-amber-400";
     return "text-rose-400";
   };
-  const isLoading = pill === "loading";
   const metricMeta =
     assessmentTier === "upper_front"
       ? {
@@ -1966,16 +2029,68 @@ export default function App() {
           },
         };
 
+  const isLoading = pill === "loading";
+  const isDarkTheme = theme === "dark";
+  const shellClass = isDarkTheme
+    ? "bg-[#0a0a0c] text-slate-100"
+    : "bg-[#eef2f7] text-slate-900";
+  const heroCardClass = isDarkTheme
+    ? "bg-gradient-to-br from-white/10 to-transparent border-white/10 hover:bg-white/10"
+    : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white";
+  const stageClass = isDarkTheme
+    ? "bg-slate-900 border-white/5"
+    : "bg-white border-slate-200";
+  const stageGlassClass = isDarkTheme
+    ? "bg-black/45 backdrop-blur-md border-white/10"
+    : "bg-white/88 backdrop-blur-md border-slate-200";
+  const sessionLogClass = isDarkTheme
+    ? "bg-black/40 backdrop-blur-xl border-white/10"
+    : "bg-white/92 backdrop-blur-xl border-slate-200";
+  const settingsPanelClass = isDarkTheme
+    ? "bg-white/5 backdrop-blur-md border-white/10"
+    : "bg-white/92 backdrop-blur-md border-slate-200";
+  const subtleTextClass = isDarkTheme ? "text-white/60" : "text-slate-500";
+  const mutedTextClass = isDarkTheme ? "text-white/40" : "text-slate-500";
+  const quietTextClass = isDarkTheme ? "text-white/70" : "text-slate-600";
+  const iconButtonClass = isDarkTheme
+    ? "border-white/30 bg-white/10 text-white/80 hover:bg-white hover:text-black"
+    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100";
+  const primaryButtonClass = isDarkTheme
+    ? "bg-white text-black hover:bg-slate-200 shadow-lg"
+    : "bg-slate-900 text-white hover:bg-slate-700 shadow-lg";
+  const tutorialOverlayClass = isDarkTheme
+    ? "bg-slate-950/75"
+    : "bg-slate-100/80";
+  const themeVars: CSSProperties = {
+    color: isDarkTheme ? "#e5edf7" : "#0f172a",
+  };
+  const floatingWindowSupported =
+    typeof window !== "undefined" &&
+    !!(
+      window as Window & {
+        documentPictureInPicture?: DocumentPictureInPictureApi;
+      }
+    ).documentPictureInPicture?.requestWindow;
+
   return (
-    <div className="min-h-screen bg-[#0a0a0c] text-slate-100 font-sans p-4 md:p-8 flex items-center justify-center">
+    <div
+      className={`min-h-screen font-sans p-4 md:p-8 flex items-center justify-center transition-colors duration-300 ${shellClass}`}
+      style={themeVars}
+    >
       <div className="w-full flex flex-col gap-6 h-full lg:h-[85vh]">
         <div className="flex-1 flex min-h-0 gap-4 lg:gap-6">
           <div className="hidden lg:flex h-full min-h-0 w-60 xl:w-64 flex-shrink-0 flex-col gap-4">
             <div className="items-center text-center flex flex-col gap-2">
-              <h1 className="text-5xl font-bold tracking-tight  bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
+              <h1
+                className={`text-5xl font-bold tracking-tight bg-clip-text text-transparent ${
+                  isDarkTheme
+                    ? "bg-gradient-to-r from-white to-white/60"
+                    : "bg-gradient-to-r from-slate-900 to-slate-500"
+                }`}
+              >
                 SukatLikod
               </h1>
-              <p className="text-sm text-white/40 font-medium uppercase tracking-[0.2em]">
+              <p className={`text-sm font-medium uppercase tracking-[0.2em] ${mutedTextClass}`}>
                 AI Posture Assistant
               </p>
             </div>
@@ -1983,35 +2098,41 @@ export default function App() {
             <button
               onClick={isActive ? stop : () => void start()}
               disabled={isLoading}
-              className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : "bg-white text-black hover:bg-slate-200 shadow-lg"} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
               {isActive ? "Stop" : "Start Session"}
             </button>
 
+            <button
+              onClick={() => setShowTutorial(true)}
+              className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-semibold border transition-all ${iconButtonClass}`}
+            >
+              <BookOpen size={18} />
+              Open Tutorial
+            </button>
+
             <div className="mt-auto flex flex-col gap-4">
-              <div className="bg-gradient-to-br from-white/10 to-transparent backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col gap-1 hover:bg-white/10 transition-all relative overflow-hidden group">
-                <div className="flex items-center justify-between text-white/50 mb-1 z-10">
+              <div
+                className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
+              >
+                <div className={`flex items-center justify-between mb-1 z-10 ${subtleTextClass}`}>
                   <span className="text-xs font-medium uppercase tracking-wider">
                     Posture Score
                   </span>
                   {score > 70 ? (
                     <CheckCircle2 size={14} className="text-emerald-400" />
                   ) : (
-                    <AlertCircle size={14} className="text-white" />
+                    <AlertCircle size={14} className={isDarkTheme ? "text-white" : "text-slate-600"} />
                   )}
                 </div>
 
                 <div className="flex items-center justify-between mt-1 z-10">
                   <div className="flex items-baseline gap-1">
-                    <span
-                      className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}
-                    >
+                    <span className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}>
                       {score}
                     </span>
-                    <span className="text-xs text-white/40 font-medium">
-                      / 100
-                    </span>
+                    <span className={`text-xs font-medium ${mutedTextClass}`}>/ 100</span>
                   </div>
                 </div>
 
@@ -2024,7 +2145,7 @@ export default function App() {
                       stroke="currentColor"
                       strokeWidth="8"
                       fill="transparent"
-                      className="text-white/10"
+                      className={isDarkTheme ? "text-white/10" : "text-slate-200"}
                     />
                     <circle
                       cx="40"
@@ -2042,6 +2163,7 @@ export default function App() {
               </div>
 
               <MetricCard
+                theme={theme}
                 label={metricMeta.trunk.label}
                 value={metrics.trunkAngle.toFixed(1)}
                 unit={metricMeta.trunk.unit}
@@ -2050,12 +2172,10 @@ export default function App() {
                 rawValue={metrics.trunkAngle}
                 signedValue={signedMetrics.trunkAngle}
                 threshold={metricMeta.thresholds.trunk}
-                progress={metricQuality(
-                  metrics.trunkAngle,
-                  metricMeta.thresholds.trunk,
-                )}
+                progress={metricQuality(metrics.trunkAngle, metricMeta.thresholds.trunk)}
               />
               <MetricCard
+                theme={theme}
                 label={metricMeta.head.label}
                 value={metrics.headForward.toFixed(2)}
                 unit={metricMeta.head.unit}
@@ -2064,12 +2184,10 @@ export default function App() {
                 rawValue={metrics.headForward}
                 signedValue={signedMetrics.headForward}
                 threshold={metricMeta.thresholds.head}
-                progress={metricQuality(
-                  metrics.headForward,
-                  metricMeta.thresholds.head,
-                )}
+                progress={metricQuality(metrics.headForward, metricMeta.thresholds.head)}
               />
               <MetricCard
+                theme={theme}
                 label={metricMeta.shoulder.label}
                 value={metrics.shoulderTilt.toFixed(2)}
                 unit={metricMeta.shoulder.unit}
@@ -2078,18 +2196,13 @@ export default function App() {
                 rawValue={metrics.shoulderTilt}
                 signedValue={signedMetrics.shoulderTilt}
                 threshold={metricMeta.thresholds.shoulder}
-                progress={metricQuality(
-                  metrics.shoulderTilt,
-                  metricMeta.thresholds.shoulder,
-                )}
+                progress={metricQuality(metrics.shoulderTilt, metricMeta.thresholds.shoulder)}
               />
             </div>
           </div>
 
-          <div
-            className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}
-          >
-            <div className="relative flex-1 bg-slate-900 rounded-[2rem] overflow-hidden border border-white/5 shadow-2xl group">
+          <div className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}>
+            <div className={`relative flex-1 rounded-[2rem] overflow-hidden border shadow-2xl group transition-colors duration-300 ${stageClass}`}>
               <video
                 ref={videoRef}
                 autoPlay
@@ -2103,29 +2216,27 @@ export default function App() {
               />
 
               {!isActive ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm z-10">
-                  <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-4">
-                    <Camera size={32} className="text-white/20" />
+                <div className={`absolute inset-0 flex flex-col items-center justify-center backdrop-blur-sm z-10 ${isDarkTheme ? "bg-slate-900/50" : "bg-white/55"}`}>
+                  <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 ${isDarkTheme ? "bg-white/5" : "bg-slate-100"}`}>
+                    <Camera size={32} className={isDarkTheme ? "text-white/20" : "text-slate-400"} />
                   </div>
-                  <p className="text-white/40 font-medium">
-                    Camera Feed Inactive
-                  </p>
+                  <p className={`font-medium ${mutedTextClass}`}>Camera Feed Inactive</p>
                 </div>
               ) : null}
 
-              <div className="absolute top-4 left-4 right-4 z-20 lg:hidden bg-black/45 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 flex items-center justify-end gap-3">
+              <div className={`absolute top-4 left-4 right-4 z-20 lg:hidden rounded-2xl px-4 py-3 flex items-center justify-end gap-3 border ${stageGlassClass}`}>
                 <div className="flex gap-3">
                   <button
                     onClick={() => setShowSettings((v) => !v)}
-                    className="flex items-center justify-center p-2.5 rounded-full transition-all border border-transparent bg-transparent text-black hover:bg-white"
-                    title="Toggle Calibration Settings"
+                    className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
+                    title="Toggle Settings"
                   >
                     <Settings2 size={18} />
                   </button>
                   <button
                     onClick={isActive ? stop : () => void start()}
                     disabled={isLoading}
-                    className={`lg:hidden flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : "bg-white text-black hover:bg-slate-200 shadow-lg"} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                    className={`lg:hidden flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
                     {isActive ? "Stop" : "Start Session"}
@@ -2133,59 +2244,45 @@ export default function App() {
                 </div>
               </div>
 
-              <div
-                className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}
-              >
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-white/20 border-dashed rounded-full" />
+              <div className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}>
+                <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-dashed rounded-full ${isDarkTheme ? "border-white/20" : "border-slate-300"}`} />
               </div>
 
               <div className="absolute left-6 bottom-6 z-20">
                 {isActive ? (
                   <>
-                    <div className="text-sm font-bold text-white uppercase tracking-wider">
+                    <div className="text-sm font-bold uppercase tracking-wider">
                       Stability {stabilityScore}%
                     </div>
-                    <div className="text-[11px] font-semibold text-white/75 uppercase tracking-wider">
+                    <div className={`text-[11px] font-semibold uppercase tracking-wider ${quietTextClass}`}>
                       Tracking {trackingHealth}%
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="text-sm font-bold text-white uppercase tracking-wider">
+                    <div className="text-sm font-bold uppercase tracking-wider">
                       Session Standby
                     </div>
-                    <div className="text-[11px] font-semibold text-white/60 uppercase tracking-wider">
+                    <div className={`text-[11px] font-semibold uppercase tracking-wider ${subtleTextClass}`}>
                       Start a session to view live metrics
                     </div>
                   </>
                 )}
               </div>
 
-              <div
-                className={`absolute right-4 top-4 bottom-4 z-30 shadow-2xl transition-all duration-200 ease-in-out ${
-                  showSessionLog
-                    ? "w-72 lg:w-80"
-                    : "w-14"
-                }`}
-              >
-                <div
-                  className={`h-full bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden ${
-                    showSessionLog ? "flex flex-col" : "flex items-start justify-center"
-                  }`}
-                >
+              <div className={`absolute right-4 top-4 bottom-4 z-30 shadow-2xl transition-all duration-200 ease-in-out ${showSessionLog ? "w-72 lg:w-80" : "w-14"}`}>
+                <div className={`h-full rounded-2xl overflow-hidden border ${showSessionLog ? "flex flex-col" : "flex items-start justify-center"} ${sessionLogClass}`}>
                   {showSessionLog ? (
                     <>
-                      <div className="px-5 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
+                      <div className={`px-5 py-4 border-b flex items-center justify-between ${isDarkTheme ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50/90"}`}>
                         <div className="flex items-center gap-2">
-                          <Bell size={16} className="text-white/90" />
-                          <h3 className="font-bold text-sm text-white uppercase tracking-wider">
-                            Session Log
-                          </h3>
+                          <Bell size={16} className={isDarkTheme ? "text-white/90" : "text-slate-700"} />
+                          <h3 className="font-bold text-sm uppercase tracking-wider">Session Log</h3>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => setShowSessionLog(false)}
-                            className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/10 text-white/80 hover:bg-white hover:text-black"
+                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
                             title="Hide Session Log"
                             aria-label="Hide Session Log"
                           >
@@ -2193,8 +2290,8 @@ export default function App() {
                           </button>
                           <button
                             onClick={() => setShowSettings((v) => !v)}
-                            className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white  hover:text-black"
-                            title="Toggle Calibration Settings"
+                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
+                            title="Toggle Settings"
                           >
                             <Settings2 size={16} />
                           </button>
@@ -2204,8 +2301,8 @@ export default function App() {
                       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full">
                         {!isActive && (
                           <div className="h-full flex flex-col items-center justify-center text-center opacity-70 space-y-3">
-                            <Bell size={24} className="text-white/40" />
-                            <span className="text-xs font-medium text-white/80">
+                            <Bell size={24} className={isDarkTheme ? "text-white/40" : "text-slate-400"} />
+                            <span className={`text-xs font-medium ${quietTextClass}`}>
                               Monitoring paused.
                               <br />
                               Start session to view feedback.
@@ -2213,19 +2310,12 @@ export default function App() {
                           </div>
                         )}
                         {feedbacks.map((f) => (
-                          <div
-                            key={f.id}
-                            className={`p-3 rounded-xl border ${f.bg} backdrop-blur-md transition-all`}
-                          >
+                          <div key={f.id} className={`p-3 rounded-xl border ${f.bg} backdrop-blur-md transition-all`}>
                             <div className="flex justify-between items-center mb-1">
-                              <span className={`text-xs font-bold ${f.color}`}>
-                                {f.title}
-                              </span>
-                              <span className="text-[10px] text-white/50">
-                                {f.time}
-                              </span>
+                              <span className={`text-xs font-bold ${f.color}`}>{f.title}</span>
+                              <span className={`text-[10px] ${mutedTextClass}`}>{f.time}</span>
                             </div>
-                            <p className="text-[13px] text-white/90 leading-relaxed">
+                            <p className={`text-[13px] leading-relaxed ${isDarkTheme ? "text-white/90" : "text-slate-700"}`}>
                               {f.text}
                             </p>
                           </div>
@@ -2233,14 +2323,10 @@ export default function App() {
                         <div ref={chatEndRef} />
                       </div>
 
-                      <div className="p-4 bg-white/5 border-t border-white/10">
-                        <div className="bg-black/50 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2">
-                          <div
-                            className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-500 animate-pulse" : "bg-white/20"}`}
-                          />
-                          <span className="text-xs text-white/70">
-                            {isActive ? feedback : "System standby"}
-                          </span>
+                      <div className={`p-4 border-t ${isDarkTheme ? "bg-white/5 border-white/10" : "bg-slate-50/90 border-slate-200"}`}>
+                        <div className={`border rounded-xl px-3 py-2.5 flex items-center gap-2 ${isDarkTheme ? "bg-black/50 border-white/10" : "bg-white border-slate-200"}`}>
+                          <div className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-500 animate-pulse" : isDarkTheme ? "bg-white/20" : "bg-slate-300"}`} />
+                          <span className={`text-xs ${quietTextClass}`}>{isActive ? feedback : "System standby"}</span>
                         </div>
                       </div>
                     </>
@@ -2248,16 +2334,14 @@ export default function App() {
                     <div className="w-full h-full flex flex-col items-center justify-start py-4 gap-3">
                       <button
                         onClick={() => setShowSessionLog(true)}
-                        className="flex items-center justify-center p-2.5 rounded-full transition-all border border-white/30 bg-white/20 text-white/80 hover:bg-white hover:text-black"
+                        className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
                         title="Show Session Log"
                         aria-label="Show Session Log"
                       >
                         <PanelRightOpen size={16} />
                       </button>
                       <div className="flex items-center justify-center">
-                        <span
-                          className="text-[10px] font-bold uppercase tracking-[0.25em] text-white/65 [writing-mode:vertical-rl] rotate-180"
-                        >
+                        <span className={`text-[10px] font-bold uppercase tracking-[0.25em] [writing-mode:vertical-rl] rotate-180 ${quietTextClass}`}>
                           Session Log
                         </span>
                       </div>
@@ -2267,262 +2351,204 @@ export default function App() {
               </div>
             </div>
 
-            <div
-              className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out ${showSettings ? "w-80 opacity-100" : "w-0 opacity-0"}`}
-            >
+            <div className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out ${showSettings ? "w-80 opacity-100" : "w-0 opacity-0"}`}>
               <div
                 aria-hidden={!showSettings}
-                className={`w-80 h-full bg-white/5 backdrop-blur-md border border-white/10 rounded-[2rem] p-6 flex flex-col overflow-y-auto transition-transform duration-200 ease-in-out ${showSettings ? "translate-x-0 pointer-events-auto" : "translate-x-3 pointer-events-none"}`}
+                className={`w-80 h-full rounded-[2rem] p-6 flex flex-col overflow-y-auto transition-transform duration-200 ease-in-out border ${showSettings ? "translate-x-0 pointer-events-auto" : "translate-x-3 pointer-events-none"} ${settingsPanelClass}`}
               >
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-2">
-                    <Settings2 size={18} className="text-white/60" />
-                    <h3 className="font-bold text-sm uppercase tracking-wider">
-                      Calibration
-                    </h3>
+                    <Settings2 size={18} className={isDarkTheme ? "text-white/60" : "text-slate-500"} />
+                    <h3 className="font-bold text-sm uppercase tracking-wider">Settings</h3>
                   </div>
                   <button
                     onClick={() => setShowSettings(false)}
-                    className="w-9 h-9 rounded-lg  text-white/70 hover:text-white hover:bg-white/10 transition-colors flex items-center justify-center"
-                    title="Close calibration"
-                    aria-label="Close calibration"
+                    className={`w-9 h-9 rounded-lg transition-colors flex items-center justify-center ${isDarkTheme ? "text-white/70 hover:text-white hover:bg-white/10" : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"}`}
+                    title="Close settings"
+                    aria-label="Close settings"
                   >
                     <X size={20} />
                   </button>
                 </div>
 
                 <div className="space-y-8">
-                  {(
-                    [
-                      {
-                        key: "trunkAngle",
-                        label: "Trunk Angle Threshold",
-                        unit: "deg",
-                        max: 45,
-                        step: 1,
-                      },
-                      {
-                        key: "headDistance",
-                        label: "Head Distance Limit",
-                        unit: "m",
-                        max: 0.5,
-                        step: 0.01,
-                      },
-                      {
-                        key: "shoulderTilt",
-                        label: "Shoulder Tilt Sensitivity",
-                        unit: "m",
-                        max: 0.2,
-                        step: 0.01,
-                      },
-                    ] as const
-                  ).map((setting) => (
-                    <div key={setting.key} className="space-y-3">
-                      <div className="flex justify-between items-center px-1">
-                        <label className="text-xs font-semibold text-white/60">
-                          {setting.label}
-                        </label>
-                        <span className="text-xs font-bold text-white tabular-nums">
-                          {sensitivity[setting.key].toFixed(
-                            setting.step < 1 ? 2 : 0,
-                          )}{" "}
-                          <span className="text-[10px] text-white/30 ml-0.5">
-                            {setting.unit}
-                          </span>
-                        </span>
-                      </div>
-                      <div className="relative h-6 flex items-center">
-                        <input
-                          type="range"
-                          min={setting.key === "trunkAngle" ? 5 : 0.01}
-                          max={setting.max}
-                          step={setting.step}
-                          value={sensitivity[setting.key]}
-                          onChange={(e) =>
-                            setSensitivity((s) => ({
-                              ...s,
-                              [setting.key]: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-8 space-y-3">
-                  <div className="flex justify-between items-center px-1">
-                    <label className="text-xs font-semibold text-white/60">
-                      Camera Source
-                    </label>
-                    <span className="text-[10px] font-bold text-white/35 uppercase tracking-wider">
-                      {cameraDevices.length || 0} detected
-                    </span>
-                  </div>
-                  <select
-                    value={selectedCameraId}
-                    onChange={(e) => {
-                      const nextCameraId = e.target.value;
-                      setSelectedCameraId(nextCameraId);
-                      if (isActive) {
-                        stop();
-                        window.setTimeout(() => {
-                          void start(nextCameraId);
-                        }, 0);
-                      }
-                    }}
-                    className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-sm font-semibold text-white outline-none transition-colors hover:bg-white/10"
-                  >
-                    {cameraDevices.length === 0 ? (
-                      <option value="">No camera detected yet</option>
-                    ) : null}
-                    {cameraDevices.map((camera) => (
-                      <option
-                        key={camera.id}
-                        value={camera.id}
-                        className="bg-slate-900 text-white"
-                      >
-                        {camera.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] leading-relaxed text-white/40">
-                    If labels are blank, allow camera access first, then reopen
-                    this panel or start a session.
-                  </p>
-                </div>
-
-                <div className="mt-8 space-y-3">
-                  <div className="flex justify-between items-center px-1">
-                    <label className="text-xs font-semibold text-white/60">
-                      Debug Tuning Panel
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowDebugPanel((value) => !value)}
-                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
-                        showDebugPanel
-                          ? "border-white/40 bg-white text-black"
-                          : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-                      }`}
-                    >
-                      {showDebugPanel ? "Visible" : "Hidden"}
-                    </button>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-white/40">
-                    Leave this on while capturing screenshots for neutral, mild
-                    slouch, and clear slouch.
-                  </p>
-                </div>
-
-                {showDebugPanel ? (
-                  <div className="mt-8 space-y-3">
+                  <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                      <label className="text-xs font-semibold text-white/60">
-                        Live Tuning Values
-                      </label>
-                      <span className="text-[10px] font-bold text-white/35 uppercase tracking-wider">
-                        {assessmentTier ?? "idle"}
+                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Camera Source</label>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                        {cameraDevices.length || 0} detected
+                      </span>
+                    </div>
+                    <select
+                      value={selectedCameraId}
+                      onChange={(e) => {
+                        const nextCameraId = e.target.value;
+                        setSelectedCameraId(nextCameraId);
+                        if (isActive) {
+                          stop();
+                          window.setTimeout(() => {
+                            void start(nextCameraId);
+                          }, 0);
+                        }
+                      }}
+                      className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white hover:bg-white/10" : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"}`}
+                    >
+                      {cameraDevices.length === 0 ? <option value="">No camera detected yet</option> : null}
+                      {cameraDevices.map((camera) => (
+                        <option
+                          key={camera.id}
+                          value={camera.id}
+                          className={isDarkTheme ? "bg-slate-900 text-white" : "bg-white text-slate-900"}
+                        >
+                          {camera.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className={`text-[11px] leading-relaxed ${mutedTextClass}`}>
+                      If labels are blank, allow camera access first, then reopen this panel or start a session.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center px-1">
+                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Theme</label>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                        {theme === "dark" ? "Dark Mode" : "Light Mode"}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      {[
-                        ["Chin Offset", debugMetrics.chinCenterOffset],
-                        ["Chin Lean", debugMetrics.chinForwardLean],
-                        ["Nose Offset", debugMetrics.noseCenterOffset],
-                        ["Mouth Tilt", debugMetrics.mouthLineTilt],
-                        ["Eye/Ear Tilt", debugMetrics.eyeOrEarTilt],
-                        ["Upper Lean", debugMetrics.upperForwardLean],
-                        ["Shoulder Level", debugMetrics.upperShoulderTilt],
-                      ].map(([label, value]) => (
-                        <div
-                          key={label}
-                          className="rounded-xl border border-white/10 bg-black/20 px-3 py-2"
+                      {([
+                        ["dark", "Dark", Moon],
+                        ["light", "Light", Sun],
+                      ] as const).map(([mode, label, Icon]) => (
+                        <button
+                          key={mode}
+                          onClick={() => setTheme(mode)}
+                          className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
+                            theme === mode
+                              ? isDarkTheme
+                                ? "border-white/40 bg-white text-black"
+                                : "border-slate-900 bg-slate-900 text-white"
+                              : isDarkTheme
+                                ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
                         >
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                            {label}
-                          </div>
-                          <div className="mt-1 text-sm font-bold tabular-nums text-white">
-                            {Number(value).toFixed(3)}
-                          </div>
-                        </div>
+                          <Icon size={16} />
+                          {label}
+                        </button>
                       ))}
                     </div>
                   </div>
-                ) : null}
 
-                <div className="mt-8 space-y-3">
-                  <div className="flex justify-between items-center px-1">
-                    <label className="text-xs font-semibold text-white/60">
-                      Audio Feedback
-                    </label>
-                    <span className="text-[10px] font-bold text-white/35 uppercase tracking-wider">
-                      5s cooldown
-                    </span>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center px-1">
+                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Audio Feedback</label>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>5s cooldown</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["off", "voice"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => setAudioMode(mode)}
+                          className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                            audioMode === mode
+                              ? isDarkTheme
+                                ? "border-white/40 bg-white text-black"
+                                : "border-slate-900 bg-slate-900 text-white"
+                              : isDarkTheme
+                                ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
+                        >
+                          {mode === "off" ? "Off" : "Voice"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className={`flex justify-between items-center px-1 text-[11px] ${mutedTextClass}`}>
+                      <span>
+                        Status:{" "}
+                        {speechStatus === "ready"
+                          ? "Ready"
+                          : speechStatus === "loading"
+                            ? "Loading voices"
+                            : speechStatus === "blocked"
+                              ? "No voice loaded"
+                              : "Unsupported"}
+                      </span>
+                      <span>{availableVoices} voice(s)</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setAudioMode("voice");
+                        speakFeedback("good", "That looks good. Keep it there.", "test-voice");
+                      }}
+                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"}`}
+                    >
+                      <Volume2 size={16} />
+                      Test Voice
+                    </button>
+                    <p className={`text-[11px] leading-relaxed ${mutedTextClass}`}>
+                      Voice prompts play only on stable posture changes and are suppressed during weak tracking.
+                    </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(["off", "voice"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        onClick={() => setAudioMode(mode)}
-                        className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
-                          audioMode === mode
-                            ? "border-white/40 bg-white text-black"
-                            : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-                        }`}
-                      >
-                        {mode === "off" ? "Off" : "Voice"}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex justify-between items-center px-1 text-[11px] text-white/45">
-                    <span>
-                      Status:{" "}
-                      {speechStatus === "ready"
-                        ? "Ready"
-                        : speechStatus === "loading"
-                          ? "Loading voices"
-                          : speechStatus === "blocked"
-                            ? "No voice loaded"
-                            : "Unsupported"}
-                    </span>
-                    <span>{availableVoices} voice(s)</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setAudioMode("voice");
-                      speakFeedback(
-                        "good",
-                        "That looks good. Keep it there.",
-                        "test-voice",
-                      );
-                    }}
-                    className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white text-sm font-semibold py-2.5 transition-colors"
-                  >
-                    Test Voice
-                  </button>
-                  <p className="text-[11px] leading-relaxed text-white/40">
-                    Voice prompts play only on stable posture changes and are
-                    suppressed during calibration or weak tracking.
-                  </p>
-                </div>
 
-                <div className="mt-6">
-                  <button
-                    onClick={() => setSensitivity(DEFAULT_SENSITIVITY)}
-                    className="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white text-sm font-semibold py-2.5 transition-colors"
-                  >
-                    Reset to Standard
-                  </button>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center px-1">
+                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Tutorial</label>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                        Reopen anytime
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowTutorial(true)}
+                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"}`}
+                    >
+                      <BookOpen size={16} />
+                      Show Tutorial
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center px-1">
+                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Floating Window</label>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                        {floatingWindowReady ? "Open" : "Optional"}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() =>
+                        floatingWindowSupported &&
+                        setFloatingWindowEnabled((value) => !value)
+                      }
+                      disabled={!floatingWindowSupported}
+                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${
+                        !floatingWindowSupported
+                          ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                          : floatingWindowEnabled
+                            ? isDarkTheme
+                              ? "border-white/40 bg-white text-black"
+                              : "border-slate-900 bg-slate-900 text-white"
+                            : isDarkTheme
+                              ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white"
+                              : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"
+                      }`}
+                    >
+                      <Monitor size={16} />
+                      {floatingWindowEnabled ? "Close Floating Window" : "Open Floating Window"}
+                    </button>
+                    <p className={`text-[11px] leading-relaxed ${mutedTextClass}`}>
+                      {floatingWindowSupported
+                        ? "Opens a compact always-on-top status window. You can resize it from the window edges to make it larger or smaller."
+                        : "This browser does not support floating document windows here. Chromium-based browsers on HTTPS support it best."}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="mt-auto pt-6">
-                  <div className="bg-white/5 border border-white/5 p-4 rounded-2xl">
-                    <p className="text-[10px] leading-relaxed text-white/40 italic">
-                      Note: Higher sensitivity values increase the threshold for
-                      warnings. Adjust based on your ergonomic workstation
-                      setup.
+                  <div className={`p-4 rounded-2xl border ${isDarkTheme ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"}`}>
+                    <p className={`text-[10px] leading-relaxed italic ${mutedTextClass}`}>
+                      Settings now focus on the essentials: camera source, dark or light mode, audio feedback, and voice testing.
                     </p>
                   </div>
                 </div>
@@ -2532,11 +2558,9 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-2 lg:hidden gap-4 flex-shrink-0">
-          <div className="bg-gradient-to-br from-white/10 to-transparent backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col gap-1 hover:bg-white/10 transition-all relative overflow-hidden group">
-            <div className="flex items-center justify-between text-white/50 z-10">
-              <span className="text-xs font-medium uppercase tracking-wider">
-                Posture Score
-              </span>
+          <div className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}>
+            <div className={`flex items-center justify-between z-10 ${subtleTextClass}`}>
+              <span className="text-xs font-medium uppercase tracking-wider">Posture Score</span>
               {score > 70 ? (
                 <CheckCircle2 size={14} className="text-emerald-400" />
               ) : (
@@ -2546,12 +2570,10 @@ export default function App() {
 
             <div className="flex items-center justify-between mt-1 z-10">
               <div className="flex items-baseline gap-1">
-                <span
-                  className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}
-                >
+                <span className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}>
                   {score}
                 </span>
-                <span className="text-xs text-white/40 font-medium">/ 100</span>
+                <span className={`text-xs font-medium ${mutedTextClass}`}>/ 100</span>
               </div>
             </div>
 
@@ -2564,7 +2586,7 @@ export default function App() {
                   stroke="currentColor"
                   strokeWidth="8"
                   fill="transparent"
-                  className="text-white/10"
+                  className={isDarkTheme ? "text-white/10" : "text-slate-200"}
                 />
                 <circle
                   cx="40"
@@ -2582,6 +2604,7 @@ export default function App() {
           </div>
 
           <MetricCard
+            theme={theme}
             label={metricMeta.trunk.label}
             value={metrics.trunkAngle.toFixed(1)}
             unit={metricMeta.trunk.unit}
@@ -2590,12 +2613,10 @@ export default function App() {
             rawValue={metrics.trunkAngle}
             signedValue={signedMetrics.trunkAngle}
             threshold={metricMeta.thresholds.trunk}
-            progress={metricQuality(
-              metrics.trunkAngle,
-              metricMeta.thresholds.trunk,
-            )}
+            progress={metricQuality(metrics.trunkAngle, metricMeta.thresholds.trunk)}
           />
           <MetricCard
+            theme={theme}
             label={metricMeta.head.label}
             value={metrics.headForward.toFixed(2)}
             unit={metricMeta.head.unit}
@@ -2604,12 +2625,10 @@ export default function App() {
             rawValue={metrics.headForward}
             signedValue={signedMetrics.headForward}
             threshold={metricMeta.thresholds.head}
-            progress={metricQuality(
-              metrics.headForward,
-              metricMeta.thresholds.head,
-            )}
+            progress={metricQuality(metrics.headForward, metricMeta.thresholds.head)}
           />
           <MetricCard
+            theme={theme}
             label={metricMeta.shoulder.label}
             value={metrics.shoulderTilt.toFixed(2)}
             unit={metricMeta.shoulder.unit}
@@ -2618,18 +2637,134 @@ export default function App() {
             rawValue={metrics.shoulderTilt}
             signedValue={signedMetrics.shoulderTilt}
             threshold={metricMeta.thresholds.shoulder}
-            progress={metricQuality(
-              metrics.shoulderTilt,
-              metricMeta.thresholds.shoulder,
-            )}
+            progress={metricQuality(metrics.shoulderTilt, metricMeta.thresholds.shoulder)}
           />
         </div>
       </div>
+
+      {floatingRootRef.current
+        ? createPortal(
+            <FloatingStatusPanel
+              theme={theme}
+              isActive={isActive}
+              pill={pill}
+              score={score}
+              feedback={feedback}
+            />,
+            floatingRootRef.current,
+          )
+        : null}
+
+      {showTutorial ? (
+        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}>
+          <div className={`w-full max-w-4xl rounded-[2rem] border shadow-2xl overflow-hidden ${isDarkTheme ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+            <div className="grid lg:grid-cols-[1.15fr_0.85fr]">
+              <div className={`p-8 lg:p-10 ${isDarkTheme ? "bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900" : "bg-gradient-to-br from-slate-50 via-white to-slate-100"}`}>
+                <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.22em] text-sky-500">
+                  <BookOpen size={16} />
+                  Quick Tutorial
+                </div>
+                <h2 className="mt-4 text-3xl lg:text-4xl font-black tracking-tight">
+                  Start posture checks without calibration screens.
+                </h2>
+                <p className={`mt-4 max-w-xl text-sm leading-7 ${quietTextClass}`}>
+                  SukatLikod now opens with a simpler flow. You can start the camera immediately, switch themes, choose your camera, and enable voice feedback from the settings drawer.
+                </p>
+                <div className="mt-8 grid gap-4">
+                  {[
+                    {
+                      icon: <Camera size={18} />,
+                      title: "Allow camera access",
+                      text: "Pick your camera in Settings if you have more than one connected.",
+                    },
+                    {
+                      icon: <Monitor size={18} />,
+                      title: "Stay centered in frame",
+                      text: "Keep your face and shoulders visible so tracking stays stable.",
+                    },
+                    {
+                      icon: <Volume2 size={18} />,
+                      title: "Use feedback when needed",
+                      text: "Voice prompts and the session log will tell you when posture changes.",
+                    },
+                  ].map((step, index) => (
+                    <div key={step.title} className={`rounded-2xl border p-4 ${isDarkTheme ? "border-white/10 bg-white/5" : "border-slate-200 bg-white"}`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${isDarkTheme ? "bg-sky-500/15 text-sky-300" : "bg-sky-100 text-sky-700"}`}>
+                          {step.icon}
+                        </div>
+                        <div>
+                          <div className={`text-[11px] font-bold uppercase tracking-[0.2em] ${mutedTextClass}`}>
+                            Step {index + 1}
+                          </div>
+                          <div className="font-bold">{step.title}</div>
+                        </div>
+                      </div>
+                      <p className={`mt-3 text-sm leading-6 ${quietTextClass}`}>{step.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={`p-8 lg:p-10 border-t lg:border-t-0 lg:border-l ${isDarkTheme ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/80"}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold">Before you begin</h3>
+                  <button
+                    onClick={() => setShowTutorial(false)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
+                  >
+                    Skip
+                  </button>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  {[
+                    "Use Start Session to begin live monitoring right away.",
+                    "Open Settings for camera source, light or dark mode, audio feedback, and voice test.",
+                    "Reopen this tutorial anytime from the sidebar or settings panel.",
+                  ].map((item) => (
+                    <div key={item} className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${isDarkTheme ? "border-white/10 bg-black/20" : "border-slate-200 bg-white"}`}>
+                      {item}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 grid gap-3">
+                  <button
+                    onClick={() => {
+                      setShowTutorial(false);
+                      if (!showSettings) {
+                        setShowSettings(true);
+                      }
+                    }}
+                    className={`w-full rounded-2xl px-4 py-3 font-semibold border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white hover:bg-white/10" : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"}`}
+                  >
+                    Review Settings
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowTutorial(false);
+                      if (!isActive) {
+                        void start();
+                      }
+                    }}
+                    disabled={isLoading}
+                    className={`w-full rounded-2xl px-4 py-3 font-semibold transition-colors ${isActive ? "bg-emerald-600 text-white" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    {isActive ? "Session Running" : "Start Session"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function MetricCard({
+  theme,
   label,
   value,
   unit,
@@ -2641,6 +2776,7 @@ function MetricCard({
   progress: _progress,
   colorClass,
 }: {
+  theme: ThemeMode;
   label: string;
   value: string;
   unit: string;
@@ -2657,10 +2793,21 @@ function MetricCard({
   void signedValue;
   void threshold;
   void _progress;
+  const isDarkTheme = theme === "dark";
 
   return (
-    <div className="bg-gradient-to-br from-white/10 to-transparent backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col gap-1 hover:bg-white/10 transition-all relative overflow-hidden group">
-      <div className="flex items-center justify-between text-white/50 mb-1 z-10">
+    <div
+      className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${
+        isDarkTheme
+          ? "bg-gradient-to-br from-white/10 to-transparent border-white/10 hover:bg-white/10"
+          : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white"
+      }`}
+    >
+      <div
+        className={`flex items-center justify-between mb-1 z-10 ${
+          isDarkTheme ? "text-white/50" : "text-slate-500"
+        }`}
+      >
         <span className="text-xs font-medium uppercase tracking-wider">
           {label}
         </span>
@@ -2668,11 +2815,101 @@ function MetricCard({
       </div>
       <div className="flex items-baseline gap-1 z-10">
         <span
-          className={`text-2xl font-bold tracking-tight ${colorClass || "text-white"}`}
+          className={`text-2xl font-bold tracking-tight ${
+            colorClass || (isDarkTheme ? "text-white" : "text-slate-900")
+          }`}
         >
           {value}
         </span>
-        <span className="text-xs text-white/40">{unit}</span>
+        <span className={`text-xs ${isDarkTheme ? "text-white/40" : "text-slate-500"}`}>
+          {unit}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function FloatingStatusPanel({
+  theme,
+  isActive,
+  pill,
+  score,
+  feedback,
+}: {
+  theme: ThemeMode;
+  isActive: boolean;
+  pill: Pill;
+  score: number;
+  feedback: string;
+}) {
+  const isDarkTheme = theme === "dark";
+  const scoreColor =
+    score > 80 ? "text-emerald-400" : score > 60 ? "text-amber-400" : "text-rose-400";
+  const statusLabel =
+    pill === "good"
+      ? "Aligned"
+      : pill === "fix"
+        ? "Adjust"
+        : pill === "loading"
+          ? "Loading"
+          : pill === "error"
+            ? "Error"
+            : "Standby";
+
+  return (
+    <div
+      className="min-h-screen p-2 text-white"
+      style={{ background: "transparent" }}
+    >
+      <div
+        className={`h-full rounded-2xl border p-3 flex flex-col gap-3 shadow-2xl backdrop-blur-xl ${
+          isDarkTheme
+            ? "border-white/12 bg-slate-950/38 text-white"
+            : "border-white/40 bg-slate-100/32 text-slate-900"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div
+              className={`text-[10px] font-bold uppercase tracking-[0.24em] ${
+                isDarkTheme ? "text-white/50" : "text-slate-700/70"
+              }`}
+            >
+              SukatLikod
+            </div>
+            <div className="text-base font-bold leading-tight">Floating Status</div>
+          </div>
+          <div
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${
+              pill === "good"
+                ? "bg-emerald-500/15 text-emerald-400"
+                : pill === "fix"
+                  ? "bg-amber-500/15 text-amber-400"
+                  : isDarkTheme
+                    ? "bg-white/10 text-white/75"
+                    : "bg-white/35 text-slate-700"
+            }`}
+          >
+            {statusLabel}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className={`text-5xl font-black leading-none ${scoreColor}`}>{score}</div>
+          <div className={`text-[11px] uppercase tracking-[0.18em] ${isDarkTheme ? "text-white/45" : "text-slate-700/70"}`}>
+            Posture Score
+          </div>
+        </div>
+
+        <div
+          className={`rounded-xl border px-3 py-3 text-sm leading-6 ${
+            isDarkTheme
+              ? "border-white/10 bg-black/20 text-white/88"
+              : "border-white/45 bg-white/30 text-slate-800"
+          }`}
+        >
+          {isActive ? feedback : "Start a session to send live posture status here."}
+        </div>
       </div>
     </div>
   );
