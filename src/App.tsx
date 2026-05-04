@@ -1858,8 +1858,8 @@ export default function App() {
     }
 
     const pipWindow = await pipApi.requestWindow({
-      width: 320,
-      height: 220,
+      width: 360,
+      height: 240,
     });
 
     floatingWindowRef.current = pipWindow;
@@ -1875,7 +1875,7 @@ export default function App() {
         pipWindow.document.head.appendChild(node.cloneNode(true));
       },
     );
-
+    
     const root = pipWindow.document.createElement("div");
     root.id = "floating-status-root";
     pipWindow.document.body.appendChild(root);
@@ -2088,7 +2088,7 @@ export default function App() {
                     : "bg-gradient-to-r from-slate-900 to-slate-500"
                 }`}
               >
-                SukatLikod
+                Uprightly
               </h1>
               <p className={`text-sm font-medium uppercase tracking-[0.2em] ${mutedTextClass}`}>
                 AI Posture Assistant
@@ -2668,7 +2668,7 @@ export default function App() {
                   Start posture checks without calibration screens.
                 </h2>
                 <p className={`mt-4 max-w-xl text-sm leading-7 ${quietTextClass}`}>
-                  SukatLikod now opens with a simpler flow. You can start the camera immediately, switch themes, choose your camera, and enable voice feedback from the settings drawer.
+                  Uprightly now opens with a simpler flow. You can start the camera immediately, switch themes, choose your camera, and enable voice feedback from the settings drawer.
                 </p>
                 <div className="mt-8 grid gap-4">
                   {[
@@ -2845,6 +2845,16 @@ function FloatingStatusPanel({
   const isDarkTheme = theme === "dark";
   const scoreColor =
     score > 80 ? "text-emerald-400" : score > 60 ? "text-amber-400" : "text-rose-400";
+  const statusTone =
+    pill === "good"
+      ? "bg-emerald-500/18 text-emerald-300 ring-emerald-400/30"
+      : pill === "fix"
+        ? "bg-amber-500/18 text-amber-300 ring-amber-400/30"
+        : pill === "error"
+          ? "bg-rose-500/18 text-rose-300 ring-rose-400/30"
+          : isDarkTheme
+            ? "bg-white/12 text-white/80 ring-white/15"
+            : "bg-slate-900/10 text-slate-700 ring-slate-900/10";
   const statusLabel =
     pill === "good"
       ? "Aligned"
@@ -2855,6 +2865,15 @@ function FloatingStatusPanel({
           : pill === "error"
             ? "Error"
             : "Standby";
+  const statusMessage = isActive
+    ? feedback
+    : "Start a session to keep a compact posture check on top.";
+  const StatusIcon =
+    pill === "good"
+      ? CheckCircle2
+      : pill === "fix" || pill === "error"
+        ? AlertCircle
+        : Camera;
 
   return (
     <div
@@ -2862,53 +2881,107 @@ function FloatingStatusPanel({
       style={{ background: "transparent" }}
     >
       <div
-        className={`h-full rounded-2xl border p-3 flex flex-col gap-3 shadow-2xl backdrop-blur-xl ${
+        className={`relative isolate h-full overflow-hidden rounded-[1.45rem] border shadow-2xl ${
           isDarkTheme
-            ? "border-white/12 bg-slate-950/38 text-white"
-            : "border-white/40 bg-slate-100/32 text-slate-900"
+            ? "border-white/12 bg-slate-950/70 text-white"
+            : "border-white/50 bg-slate-100/78 text-slate-900"
         }`}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div
+          className={`absolute inset-0 ${
+            isDarkTheme
+              ? "bg-[radial-gradient(circle_at_top_left,_rgba(96,165,250,0.28),_transparent_38%),radial-gradient(circle_at_top_right,_rgba(15,23,42,0.22),_transparent_34%),linear-gradient(180deg,_rgba(15,23,42,0.18)_0%,_rgba(2,6,23,0.32)_48%,_rgba(2,6,23,0.88)_100%)]"
+              : "bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(255,255,255,0.55),_transparent_30%),linear-gradient(180deg,_rgba(255,255,255,0.16)_0%,_rgba(226,232,240,0.28)_48%,_rgba(226,232,240,0.92)_100%)]"
+          }`}
+        />
+        <div
+          className={`absolute inset-[10px] rounded-[1.15rem] ${
+            isDarkTheme
+              ? "border border-white/8 bg-white/[0.03]"
+              : "border border-white/60 bg-white/20"
+          }`}
+        />
+
+        <div className="relative flex h-full flex-col justify-between p-3.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div
+                className={`flex h-9 w-9 items-center justify-center rounded-full border ${
+                  isDarkTheme
+                    ? "border-white/12 bg-black/20 text-white/90"
+                    : "border-white/70 bg-white/65 text-slate-700"
+                }`}
+              >
+                <StatusIcon size={18} />
+              </div>
+              <div>
+                <div
+                  className={`text-[10px] font-bold uppercase tracking-[0.22em] ${
+                    isDarkTheme ? "text-white/55" : "text-slate-700/65"
+                  }`}
+                >
+                  Uprightly
+                </div>
+                <div className="text-sm font-semibold leading-tight">
+                  {isActive ? "Live posture check" : "Floating preview"}
+                </div>
+              </div>
+            </div>
             <div
-              className={`text-[10px] font-bold uppercase tracking-[0.24em] ${
-                isDarkTheme ? "text-white/50" : "text-slate-700/70"
+              className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ring-1 ${statusTone}`}
+            >
+              {statusLabel}
+            </div>
+          </div>
+
+          <div
+            className={`mx-auto flex h-full w-full max-w-[12rem] flex-1 items-center justify-center`}
+          >
+            <div
+              className={`flex h-24 w-24 items-center justify-center rounded-full border shadow-lg ${
+                isDarkTheme
+                  ? "border-white/10 bg-black/25"
+                  : "border-white/80 bg-white/55"
               }`}
             >
-              SukatLikod
+              <div className={`text-4xl font-black leading-none ${scoreColor}`}>{score}</div>
             </div>
-            <div className="text-base font-bold leading-tight">Floating Status</div>
           </div>
+
           <div
-            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${
-              pill === "good"
-                ? "bg-emerald-500/15 text-emerald-400"
-                : pill === "fix"
-                  ? "bg-amber-500/15 text-amber-400"
-                  : isDarkTheme
-                    ? "bg-white/10 text-white/75"
-                    : "bg-white/35 text-slate-700"
+            className={`rounded-[1.1rem] border p-3 backdrop-blur-md ${
+              isDarkTheme
+                ? "border-white/10 bg-black/35"
+                : "border-white/70 bg-white/58"
             }`}
           >
-            {statusLabel}
+            <div className="flex items-end justify-between gap-3">
+              <div className="min-w-0">
+                <div
+                  className={`text-[10px] font-bold uppercase tracking-[0.18em] ${
+                    isDarkTheme ? "text-white/50" : "text-slate-700/60"
+                  }`}
+                >
+                  Posture Score
+                </div>
+                <div className="mt-1 truncate text-base font-semibold">
+                  {statusLabel === "Aligned"
+                    ? "Looking balanced"
+                    : statusLabel === "Adjust"
+                      ? "Needs correction"
+                      : statusLabel}
+                </div>
+              </div>
+              <div className={`text-2xl font-black leading-none ${scoreColor}`}>{score}</div>
+            </div>
+            <div
+              className={`mt-2 max-h-10 overflow-hidden text-[12px] leading-5 ${
+                isDarkTheme ? "text-white/80" : "text-slate-700"
+              }`}
+            >
+              {statusMessage}
+            </div>
           </div>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <div className={`text-5xl font-black leading-none ${scoreColor}`}>{score}</div>
-          <div className={`text-[11px] uppercase tracking-[0.18em] ${isDarkTheme ? "text-white/45" : "text-slate-700/70"}`}>
-            Posture Score
-          </div>
-        </div>
-
-        <div
-          className={`rounded-xl border px-3 py-3 text-sm leading-6 ${
-            isDarkTheme
-              ? "border-white/10 bg-black/20 text-white/88"
-              : "border-white/45 bg-white/30 text-slate-800"
-          }`}
-        >
-          {isActive ? feedback : "Start a session to send live posture status here."}
         </div>
       </div>
     </div>
