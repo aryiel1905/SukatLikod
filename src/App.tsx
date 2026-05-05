@@ -26,6 +26,7 @@ import {
   Monitor,
   Volume2,
   BookOpen,
+  ShieldCheck,
 } from "lucide-react";
 import {
   FilesetResolver,
@@ -101,14 +102,35 @@ type SilhouetteMetrics = {
 
 type AudioMode = "off" | "voice";
 type ThemeMode = "dark" | "light";
+type AutoPipStatus = "supported" | "manual_only" | "blocked" | "unsupported";
 type CameraDevice = {
   id: string;
   label: string;
 };
 type SpeechStatus = "unsupported" | "blocked" | "ready" | "loading";
+type TutorialTarget =
+  | "start-session"
+  | "camera-stage"
+  | "posture-score"
+  | "session-log"
+  | "settings-panel";
+type TutorialStep = {
+  target: TutorialTarget;
+  title: string;
+  body: string;
+};
+type TutorialRect = {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
 type DebugMetrics = {
   chinCenterOffset: number;
   chinForwardLean: number;
+  chinLiftProxy: number;
   noseCenterOffset: number;
   mouthLineTilt: number;
   eyeOrEarTilt: number;
@@ -137,12 +159,13 @@ type DocumentPictureInPictureApi = {
   window?: Window | null;
 };
 
-const WINDOW = 30;
+const AUTO_PIP_ACTION = "enterpictureinpicture" as MediaSessionAction;
+const WINDOW = 12;
 const EMA_ALPHA = 0.25;
 const VIS_THRESHOLD = 0.35;
 const DRAW_VIS_THRESHOLD = 0.12;
-const HOLD_STILL_MS = 850;
-const PREDICTION_VOTE_WINDOW = 6;
+const HOLD_STILL_MS = 300;
+const PREDICTION_VOTE_WINDOW = 3;
 const AUDIO_COOLDOWN_MS = 5000;
 const HEAD_FORWARD_GRACE_RATIO = 1.2;
 const FRONT_FACE_VISIBILITY_MIN = 0.4;
@@ -154,6 +177,11 @@ const UPPER_FRONT_HEAD_OFFSET_THRESHOLD = 0.18;
 const UPPER_FRONT_FORWARD_LEAN_THRESHOLD = 0.18;
 const UPPER_FRONT_FORWARD_LEAN_SEVERE = 0.45;
 const UPPER_FRONT_SHOULDER_TILT_THRESHOLD = 0.12;
+const UPPER_FRONT_SHOULDER_TILT_RECOVERY = 0.09;
+const CHIN_LIFT_PROXY_NEUTRAL = 0.55;
+const CHIN_LIFT_PROXY_TO_HEAD_LEAN_SCALE = 0.45;
+const CHIN_LIFT_PROXY_THRESHOLD = 0.95;
+const CHIN_LIFT_PROXY_SEVERE = 1.15;
 const UPPER_FRONT_TRACKING_MIN = 62;
 const UPPER_FRONT_FRAME_MARGIN = 0.08;
 const UPPER_FRONT_SCORE_CAP = 86;
@@ -172,12 +200,40 @@ const DEFAULT_SILHOUETTE_METRICS: SilhouetteMetrics = {
 const DEFAULT_DEBUG_METRICS: DebugMetrics = {
   chinCenterOffset: 0,
   chinForwardLean: 0,
+  chinLiftProxy: 0,
   noseCenterOffset: 0,
   mouthLineTilt: 0,
   eyeOrEarTilt: 0,
   upperForwardLean: 0,
   upperShoulderTilt: 0,
 };
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    target: "start-session",
+    title: "Start or stop monitoring",
+    body: "Use this control to open the camera and begin live posture checks. Press it again when you want to stop the session.",
+  },
+  {
+    target: "camera-stage",
+    title: "Stay inside the camera frame",
+    body: "This is where the camera feed and pose guide appear. Keep your head and shoulders visible so the app can track your posture reliably.",
+  },
+  {
+    target: "posture-score",
+    title: "Read your posture score",
+    body: "The score gives a quick posture summary. The metric cards underneath show which part needs attention, such as head offset or shoulder level.",
+  },
+  {
+    target: "session-log",
+    title: "Follow the live feedback",
+    body: "The session log records posture feedback while monitoring is active, so you can review what changed during the session.",
+  },
+  {
+    target: "settings-panel",
+    title: "Adjust the session setup",
+    body: "Settings control the camera source, theme, voice feedback, tutorial replay, and floating status window.",
+  },
+];
 
 type SideKind = "left" | "right";
 
@@ -205,6 +261,38 @@ function stabilityFromVariance(trunkVar: number) {
 function pushLimited(arr: number[], x: number) {
   arr.push(x);
   if (arr.length > WINDOW) arr.shift();
+}
+
+function findVisibleTourTarget(target: TutorialTarget): TutorialRect | null {
+  if (typeof document === "undefined") return null;
+
+  const elements = Array.from(
+    document.querySelectorAll<HTMLElement>(`[data-tour="${target}"]`),
+  );
+
+  for (const element of elements) {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const isVisible =
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0";
+
+    if (isVisible) {
+      return {
+        top: rect.top,
+        left: rect.left,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+  }
+
+  return null;
 }
 
 function vsub(a: Point3, b: Point3) {
@@ -423,7 +511,10 @@ function classifyFrontCapture(
   };
   const torsoLength = planarDistance(midShoulderN, midHipN);
 
-  if (hipWidth >= FRONT_HIP_WIDTH_MIN && torsoLength >= FRONT_TORSO_LENGTH_MIN) {
+  if (
+    hipWidth >= FRONT_HIP_WIDTH_MIN &&
+    torsoLength >= FRONT_TORSO_LENGTH_MIN
+  ) {
     return { tier: "full_front", faceVisible, upperVisible, hipsVisible };
   }
 
@@ -445,10 +536,14 @@ function getNaturalAudioFromMessage(
   const lower = msg.toLowerCase();
   if (lower.includes("move into view")) return "Move a little more into view.";
   if (lower.includes("face the camera")) return "Face the camera a bit more.";
-  if (lower.includes("turn and face")) return "Turn a little and face the camera.";
+  if (lower.includes("turn and face"))
+    return "Turn a little and face the camera.";
   if (lower.includes("hold still")) return "Hold still for a moment.";
   if (lower.includes("level your shoulders") || dominant === "shoulder") {
     return "Relax and level your shoulders.";
+  }
+  if (lower.includes("lower your chin")) {
+    return "Lower your chin a little.";
   }
   if (lower.includes("center your head") || dominant === "trunk") {
     return "Center your head a bit more.";
@@ -479,6 +574,7 @@ function getFeedbackPresentation(
   let bg = "bg-cyan-500/10 border-cyan-500/20";
   let text = msg;
   let audio = "That looks good. Keep it there.";
+  const lower = msg.toLowerCase();
 
   if (scoreValue < 60) {
     type = "critical";
@@ -487,12 +583,20 @@ function getFeedbackPresentation(
     bg = "bg-rose-500/10 border-rose-500/20";
     text = msg;
     audio = getNaturalAudioFromMessage(msg, dominant);
+  } else if (lower.includes("lower your chin")) {
+    type = "warning";
+    title = "Lower Your Chin";
+    color = "text-amber-400";
+    bg = "bg-amber-500/10 border-amber-500/20";
+    text = "Lower your chin and keep your head level.";
+    audio = "Lower your chin a little.";
   } else if (dominant === "head" && h > headThreshold) {
     type = "warning";
     title = "Bring Your Head Back";
     color = "text-amber-400";
     bg = "bg-amber-500/10 border-amber-500/20";
-    text = "Lift through the crown of your head and keep your chin gently tucked.";
+    text =
+      "Lift through the crown of your head and keep your chin gently tucked.";
     audio = "Bring your head back a little.";
   } else if (dominant === "shoulder") {
     type = "warning";
@@ -525,6 +629,7 @@ export default function App() {
 
   const lastVideoTimeRef = useRef<number>(-1);
   const lastFeedbackRef = useRef<string>("");
+  const lastSpokenMessageRef = useRef<string>("");
   const lastInferTsRef = useRef<number>(0);
   const inferInFlightRef = useRef<boolean>(false);
   const lastAudioEventRef = useRef<{ key: string; at: number }>({
@@ -532,7 +637,9 @@ export default function App() {
     at: 0,
   });
   const lastAnnouncedStateRef = useRef<"good" | "fix" | "idle">("idle");
-  const baselineMetricsRef = useRef<Record<FrontCaptureTier, BaselineMetrics | null>>({
+  const baselineMetricsRef = useRef<
+    Record<FrontCaptureTier, BaselineMetrics | null>
+  >({
     full_front: null,
     upper_front: null,
   });
@@ -542,6 +649,7 @@ export default function App() {
   const holdStillStartRef = useRef<number>(0);
   const floatingWindowRef = useRef<Window | null>(null);
   const floatingRootRef = useRef<HTMLDivElement | null>(null);
+  const autoFloatingWindowRef = useRef(false);
   const emaRef = useRef<{
     trunk: number | null;
     head: number | null;
@@ -558,6 +666,7 @@ export default function App() {
     outline: null,
   });
   const predictionVotesRef = useRef<boolean[]>([]);
+  const shoulderWarningActiveRef = useRef(false);
   const lastSmoothedRef = useRef<{
     trunk: number;
     head: number;
@@ -587,8 +696,16 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showSessionLog, setShowSessionLog] = useState(true);
   const [showTutorial, setShowTutorial] = useState(true);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [tutorialTargetRect, setTutorialTargetRect] =
+    useState<TutorialRect | null>(null);
   const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(false);
   const [floatingWindowReady, setFloatingWindowReady] = useState(false);
+  const [autoPipStatus, setAutoPipStatus] =
+    useState<AutoPipStatus>("unsupported");
+  const [isPageFocused, setIsPageFocused] = useState(() =>
+    typeof document === "undefined" ? true : document.hasFocus() && !document.hidden,
+  );
   const [pill, setPill] = useState<Pill>("idle");
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof window === "undefined") return "dark";
@@ -648,6 +765,7 @@ export default function App() {
     buffersRef.current.outline = [];
     lastVideoTimeRef.current = -1;
     lastFeedbackRef.current = "";
+    lastSpokenMessageRef.current = "";
     holdStillStartRef.current = 0;
     lastAudioEventRef.current = { key: "", at: 0 };
     lastAnnouncedStateRef.current = "idle";
@@ -655,6 +773,7 @@ export default function App() {
       full_front: null,
       upper_front: null,
     };
+    shoulderWarningActiveRef.current = false;
     emaRef.current = {
       trunk: null,
       head: null,
@@ -806,9 +925,18 @@ export default function App() {
       const tThr = thresholds?.trunkAngle ?? sensitivity.trunkAngle;
       const hThr = thresholds?.headDistance ?? sensitivity.headDistance;
       const sThr = thresholds?.shoulderTilt ?? sensitivity.shoulderTilt;
+      const shoulderRecoveryThreshold =
+        captureTier === "upper_front"
+          ? Math.min(sThr, UPPER_FRONT_SHOULDER_TILT_RECOVERY)
+          : sThr * 0.78;
+      const shoulderWarnActive = shoulderWarningActiveRef.current;
+      const shoulderOutOfRange = shoulderWarnActive
+        ? s >= shoulderRecoveryThreshold
+        : s >= sThr;
+      shoulderWarningActiveRef.current = shoulderOutOfRange;
       const tRatio = t / tThr;
       const hRatio = h / hThr;
-      const sRatio = s / sThr;
+      const sRatio = shoulderOutOfRange ? s / sThr : 0;
       const worst = Math.max(tRatio, hRatio, sRatio);
       const dominant: DominantIssue =
         captureTier === "upper_front"
@@ -851,15 +979,11 @@ export default function App() {
           : worst <= 1 || mildHeadOnly;
 
       let msg =
-        captureTier === "full_front"
-          ? "Good posture."
-          : "Looking good.";
+        captureTier === "full_front" ? "Good posture." : "Looking good.";
       if (!ok) {
         if (captureTier === "full_front") {
-          if (dominant === "trunk")
-            msg = "Sit straighter.";
-          else if (dominant === "head")
-            msg = "Bring your head back a little.";
+          if (dominant === "trunk") msg = "Sit straighter.";
+          else if (dominant === "head") msg = "Bring your head back a little.";
           else msg = "Level your shoulders.";
         } else {
           if (h >= UPPER_FRONT_FORWARD_LEAN_SEVERE) {
@@ -873,10 +997,7 @@ export default function App() {
           }
         }
       } else if (mildHeadOnly) {
-        msg =
-          captureTier === "full_front"
-            ? "Good posture."
-            : "Looking good.";
+        msg = captureTier === "full_front" ? "Good posture." : "Looking good.";
       }
 
       return {
@@ -1043,6 +1164,10 @@ export default function App() {
         return;
       }
 
+      if (lastSpokenMessageRef.current === message) {
+        return;
+      }
+
       const now = Date.now();
       const last = lastAudioEventRef.current;
       const stateChanged = lastAnnouncedStateRef.current !== nextState;
@@ -1070,6 +1195,7 @@ export default function App() {
       utterance.volume = 0.9;
       window.speechSynthesis.speak(utterance);
 
+      lastSpokenMessageRef.current = message;
       lastAudioEventRef.current = { key: eventKey, at: now };
       lastAnnouncedStateRef.current = nextState;
     },
@@ -1134,7 +1260,9 @@ export default function App() {
                   IDX.R_ELBOW,
                   IDX.L_HIP,
                   IDX.R_HIP,
-                  ...(faceLandmarks ? [{ ...faceLandmarks[FACE_IDX.CHIN] }] : []),
+                  ...(faceLandmarks
+                    ? [{ ...faceLandmarks[FACE_IDX.CHIN] }]
+                    : []),
                 ]
               : [
                   IDX.NOSE,
@@ -1144,7 +1272,9 @@ export default function App() {
                   IDX.R_SHOULDER,
                   IDX.L_HIP,
                   IDX.R_HIP,
-                  ...(faceLandmarks ? [{ ...faceLandmarks[FACE_IDX.CHIN] }] : []),
+                  ...(faceLandmarks
+                    ? [{ ...faceLandmarks[FACE_IDX.CHIN] }]
+                    : []),
                 ];
           links =
             overlayDetail === "detailed"
@@ -1160,7 +1290,12 @@ export default function App() {
                   [IDX.R_SHOULDER, IDX.R_HIP],
                   [IDX.L_HIP, IDX.R_HIP],
                   ...(faceLandmarks
-                    ? [[IDX.NOSE, { ...faceLandmarks[FACE_IDX.CHIN] }] as [NodeRef, NodeRef]]
+                    ? [
+                        [IDX.NOSE, { ...faceLandmarks[FACE_IDX.CHIN] }] as [
+                          NodeRef,
+                          NodeRef,
+                        ],
+                      ]
                     : []),
                 ]
               : [
@@ -1171,7 +1306,12 @@ export default function App() {
                   [IDX.R_SHOULDER, IDX.R_HIP],
                   [IDX.L_HIP, IDX.R_HIP],
                   ...(faceLandmarks
-                    ? [[IDX.NOSE, { ...faceLandmarks[FACE_IDX.CHIN] }] as [NodeRef, NodeRef]]
+                    ? [
+                        [IDX.NOSE, { ...faceLandmarks[FACE_IDX.CHIN] }] as [
+                          NodeRef,
+                          NodeRef,
+                        ],
+                      ]
                     : []),
                 ];
         } else if (
@@ -1428,17 +1568,11 @@ export default function App() {
         setScore(0);
         setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
         setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setFeedback(
-          "Keep both shoulders in view.",
-        );
+        setFeedback("Keep both shoulders in view.");
         return;
       }
       const hipsReady =
-        captureTier === "full_front" &&
-        !!lh &&
-        !!rh &&
-        !!lhN &&
-        !!rhN;
+        captureTier === "full_front" && !!lh && !!rh && !!lhN && !!rhN;
 
       const midShoulder = midpoint(ls as Point3, rs as Point3);
       const midHip: Point3 = hipsReady
@@ -1462,6 +1596,13 @@ export default function App() {
       const chinForwardLean = chinPoint
         ? normalizedDepthDelta(chinPoint, midShoulder, shoulderWorldWidth)
         : 0;
+      const chinLiftProxy = chinPoint
+        ? Math.max(0, (chinPoint.y - noseN.y) / shoulderWidth)
+        : 0;
+      const upperBackwardLean = Math.max(
+        0,
+        chinLiftProxy - CHIN_LIFT_PROXY_NEUTRAL,
+      ) * CHIN_LIFT_PROXY_TO_HEAD_LEAN_SCALE;
       const mouthLineTilt =
         faceLandmarks?.[FACE_IDX.L_MOUTH] && faceLandmarks?.[FACE_IDX.R_MOUTH]
           ? Math.abs(
@@ -1473,6 +1614,7 @@ export default function App() {
         normalizedDepthDelta(nose as Point3, midShoulder, shoulderWorldWidth),
         chinForwardLean,
         eyeOrEarTilt,
+        upperBackwardLean,
       );
       const upperShoulderTilt = Math.max(
         Math.abs(lsN.y - rsN.y) / shoulderWidth,
@@ -1481,6 +1623,7 @@ export default function App() {
       setDebugMetrics({
         chinCenterOffset,
         chinForwardLean,
+        chinLiftProxy,
         noseCenterOffset,
         mouthLineTilt,
         eyeOrEarTilt,
@@ -1526,10 +1669,19 @@ export default function App() {
       const hSigned =
         captureTier === "full_front"
           ? headForwardSignedM(nose as Point3, midShoulder)
-          : Math.max(
-              normalizedDepthDelta(nose as Point3, midShoulder, shoulderWorldWidth),
-              chinForwardLean,
-            );
+          : (() => {
+              const forwardComponent = Math.max(
+                normalizedDepthDelta(
+                  nose as Point3,
+                  midShoulder,
+                  shoulderWorldWidth,
+                ),
+                chinForwardLean,
+              );
+              return forwardComponent >= upperBackwardLean
+                ? forwardComponent
+                : -upperBackwardLean;
+            })();
       const sSigned =
         captureTier === "full_front"
           ? shoulderTiltSignedM(ls as Point3, rs as Point3)
@@ -1597,8 +1749,30 @@ export default function App() {
           shoulder: sM,
         });
 
-      const d = computeDecision(captureTier, effectiveSensitivity, baseline);
-      setMetrics({ trunkAngle: d.t ?? 0, headForward: d.h ?? 0, shoulderTilt: d.s ?? 0 });
+      const dBase = computeDecision(captureTier, effectiveSensitivity, baseline);
+      const lookUpDetected = chinLiftProxy >= CHIN_LIFT_PROXY_THRESHOLD;
+      const severeLookUp = chinLiftProxy >= CHIN_LIFT_PROXY_SEVERE;
+      const d = lookUpDetected
+        ? {
+            ...dBase,
+            ok: false,
+            score: Math.min(dBase.score ?? 100, severeLookUp ? 52 : 68),
+            msg: severeLookUp
+              ? "Lower your chin and sit straighter."
+              : "Lower your chin a little.",
+            dominant: "head" as DominantIssue,
+            h: Math.max(
+              dBase.h ?? 0,
+              effectiveSensitivity.headDistance * (severeLookUp ? 1.8 : 1.3),
+            ),
+            hRatio: Math.max(dBase.hRatio, severeLookUp ? 1.8 : 1.3),
+          }
+        : dBase;
+      setMetrics({
+        trunkAngle: d.t ?? 0,
+        headForward: d.h ?? 0,
+        shoulderTilt: d.s ?? 0,
+      });
       setSignedMetrics({
         trunkAngle: tSigned,
         headForward: hSigned,
@@ -1635,7 +1809,7 @@ export default function App() {
       const nextScore =
         captureTier === "upper_front"
           ? Math.min(d.score ?? 0, UPPER_FRONT_SCORE_CAP)
-          : d.score ?? 0;
+          : (d.score ?? 0);
       const votedOk = applyPredictionVote(d.ok);
       const stablePresentation = getFeedbackPresentation(
         nextScore,
@@ -1647,25 +1821,26 @@ export default function App() {
       setScore(nextScore);
       setFeedback(d.msg);
       setPill(votedOk ? "good" : "fix");
-      const stablePrompt =
-        votedOk
-          ? captureTier === "full_front"
-            ? "Good posture."
-            : "Looking good. Keep your head centered and shoulders level."
-          : d.msg;
+      const stablePrompt = votedOk
+        ? captureTier === "full_front"
+          ? "Good posture."
+          : "Looking good. Keep your head centered and shoulders level."
+        : d.msg;
       if (votedOk) {
         speakFeedback("good", stablePresentation.audio, `good-${captureTier}`);
       } else {
-        speakFeedback("fix", stablePresentation.audio, stablePresentation.audio);
+        speakFeedback(
+          "fix",
+          stablePresentation.audio,
+          stablePresentation.audio,
+        );
       }
       if (votedOk) {
         setFeedback(stablePrompt);
       }
 
       if (d.t != null && d.h != null) {
-        const logMsg = votedOk
-          ? stablePrompt
-          : d.msg;
+        const logMsg = votedOk ? stablePrompt : d.msg;
         pushFeedback(
           nextScore,
           logMsg,
@@ -1775,62 +1950,10 @@ export default function App() {
     [draw, process],
   );
 
-  const start = useCallback(async (cameraId = selectedCameraId) => {
-    try {
-      setPill("loading");
-      setFeedback("Loading pose model...");
-      await ensureLandmarker();
-
-      setFeedback("Requesting webcam...");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: cameraId
-          ? {
-              deviceId: { exact: cameraId },
-              width: { ideal: 960 },
-              height: { ideal: 540 },
-              frameRate: { ideal: 30, max: 30 },
-            }
-          : {
-              facingMode: { ideal: "user" },
-              width: { ideal: 960 },
-              height: { ideal: 540 },
-              frameRate: { ideal: 30, max: 30 },
-            },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-      const video = videoRef.current;
-      if (!video) return;
-
-      video.srcObject = stream;
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = () => resolve();
-      });
-
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
-      resetBuffers();
-      await refreshCameraDevices();
-      setIsActive(true);
-      setPill("detecting");
-      setFeedback("Face the camera. Keep your head and shoulders visible.");
-      rafRef.current = requestAnimationFrame(loop);
-    } catch (error) {
-      console.error(error);
-      setIsActive(false);
-      setPill("error");
-      setFeedback("Failed to start. Check camera permission and reload.");
-    }
-  }, [ensureLandmarker, loop, refreshCameraDevices, resetBuffers, selectedCameraId]);
-
   const closeFloatingWindow = useCallback(() => {
     floatingRootRef.current = null;
     setFloatingWindowReady(false);
+    autoFloatingWindowRef.current = false;
 
     const pipWindow = floatingWindowRef.current;
     floatingWindowRef.current = null;
@@ -1858,26 +1981,32 @@ export default function App() {
     }
 
     const pipWindow = await pipApi.requestWindow({
-      width: 360,
-      height: 240,
+      width: 456,
+      height: 535,
     });
 
     floatingWindowRef.current = pipWindow;
     pipWindow.document.title = "SukatLikod Status";
     pipWindow.document.body.innerHTML = "";
     pipWindow.document.body.style.margin = "0";
-    pipWindow.document.body.style.minHeight = "100vh";
+    pipWindow.document.documentElement.style.width = "100%";
+    pipWindow.document.documentElement.style.height = "100%";
+    pipWindow.document.body.style.width = "100%";
+    pipWindow.document.body.style.height = "100%";
+    pipWindow.document.body.style.minHeight = "0";
     pipWindow.document.body.style.background = "transparent";
     pipWindow.document.body.style.overflow = "hidden";
 
-    Array.from(document.querySelectorAll("style, link[rel='stylesheet']")).forEach(
-      (node) => {
-        pipWindow.document.head.appendChild(node.cloneNode(true));
-      },
-    );
-    
+    Array.from(
+      document.querySelectorAll("style, link[rel='stylesheet']"),
+    ).forEach((node) => {
+      pipWindow.document.head.appendChild(node.cloneNode(true));
+    });
+
     const root = pipWindow.document.createElement("div");
     root.id = "floating-status-root";
+    root.style.width = "100%";
+    root.style.height = "100%";
     pipWindow.document.body.appendChild(root);
     floatingRootRef.current = root;
     setFloatingWindowReady(true);
@@ -1889,6 +2018,68 @@ export default function App() {
       setFloatingWindowEnabled(false);
     });
   }, []);
+
+  const start = useCallback(
+    async (cameraId = selectedCameraId) => {
+      try {
+        setPill("loading");
+        setFeedback("Loading pose model...");
+        await ensureLandmarker();
+
+        setFeedback("Requesting webcam...");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: cameraId
+            ? {
+                deviceId: { exact: cameraId },
+                width: { ideal: 960 },
+                height: { ideal: 540 },
+                frameRate: { ideal: 30, max: 30 },
+              }
+            : {
+                facingMode: { ideal: "user" },
+                width: { ideal: 960 },
+                height: { ideal: 540 },
+                frameRate: { ideal: 30, max: 30 },
+              },
+          audio: false,
+        });
+
+        streamRef.current = stream;
+        const video = videoRef.current;
+        if (!video) return;
+
+        video.srcObject = stream;
+        await new Promise<void>((resolve) => {
+          video.onloadedmetadata = () => resolve();
+        });
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        resetBuffers();
+        await refreshCameraDevices();
+        setIsActive(true);
+        setPill("detecting");
+        setFeedback("Face the camera. Keep your head and shoulders visible.");
+        rafRef.current = requestAnimationFrame(loop);
+      } catch (error) {
+        console.error(error);
+        setIsActive(false);
+        setPill("error");
+        setFeedback("Failed to start. Check camera permission and reload.");
+      }
+    },
+    [
+      ensureLandmarker,
+      loop,
+      refreshCameraDevices,
+      resetBuffers,
+      selectedCameraId,
+    ],
+  );
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1908,6 +2099,25 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncPageFocus = () => {
+      setIsPageFocused(document.hasFocus() && !document.hidden);
+    };
+
+    syncPageFocus();
+    document.addEventListener("visibilitychange", syncPageFocus);
+    window.addEventListener("focus", syncPageFocus);
+    window.addEventListener("blur", syncPageFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", syncPageFocus);
+      window.removeEventListener("focus", syncPageFocus);
+      window.removeEventListener("blur", syncPageFocus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (floatingWindowEnabled) {
       void openFloatingWindow().catch((error) => {
         console.error("Floating window failed:", error);
@@ -1916,10 +2126,164 @@ export default function App() {
       return;
     }
 
-    closeFloatingWindow();
+    if (!autoFloatingWindowRef.current) {
+      closeFloatingWindow();
+    }
   }, [closeFloatingWindow, floatingWindowEnabled, openFloatingWindow]);
 
   useEffect(() => closeFloatingWindow, [closeFloatingWindow]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const pipApi = (
+      window as Window & {
+        documentPictureInPicture?: DocumentPictureInPictureApi;
+      }
+    ).documentPictureInPicture;
+    const hasDocumentPip = !!pipApi?.requestWindow;
+
+    if (!hasDocumentPip) {
+      setAutoPipStatus("unsupported");
+      return;
+    }
+
+    if (!window.isSecureContext || !("mediaSession" in navigator)) {
+      setAutoPipStatus("manual_only");
+      return;
+    }
+
+    if (typeof navigator.mediaSession.setCameraActive !== "function") {
+      setAutoPipStatus("manual_only");
+      return;
+    }
+
+    try {
+      navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, () => {});
+      navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, null);
+      setAutoPipStatus("supported");
+    } catch {
+      setAutoPipStatus("blocked");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !("mediaSession" in navigator) ||
+      typeof navigator.mediaSession.setCameraActive !== "function"
+    ) {
+      return;
+    }
+
+    try {
+      navigator.mediaSession.setCameraActive(isActive);
+    } catch (error) {
+      console.warn("Unable to update camera activity for media session:", error);
+    }
+
+    return () => {
+      try {
+        navigator.mediaSession.setCameraActive(false);
+      } catch {
+        // Ignore cleanup failures in browsers with partial Media Session support.
+      }
+    };
+  }, [isActive]);
+
+  useEffect(() => {
+    const supportsFloatingWindow =
+      typeof window !== "undefined" &&
+      !!(
+        (
+          window as Window & {
+            documentPictureInPicture?: DocumentPictureInPictureApi;
+          }
+        ).documentPictureInPicture?.requestWindow
+      );
+
+    if (
+      typeof window === "undefined" ||
+      !("mediaSession" in navigator) ||
+      !supportsFloatingWindow ||
+      !isActive
+    ) {
+      return;
+    }
+
+    try {
+      navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, () => {
+        setFloatingWindowEnabled(true);
+        void openFloatingWindow().catch((error) => {
+          console.error("Automatic floating window failed:", error);
+        });
+      });
+    } catch (error) {
+      console.warn("Automatic floating window is not supported here:", error);
+      return;
+    }
+
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, null);
+      } catch {
+        // Ignore cleanup failures in browsers that partially expose Media Session.
+      }
+    };
+  }, [isActive, openFloatingWindow]);
+
+  useEffect(() => {
+    const supportsFloatingWindow =
+      typeof window !== "undefined" &&
+      !!(
+        (
+          window as Window & {
+            documentPictureInPicture?: DocumentPictureInPictureApi;
+          }
+        ).documentPictureInPicture?.requestWindow
+      );
+
+    if (typeof window === "undefined" || !supportsFloatingWindow || !isActive) {
+      if (autoFloatingWindowRef.current && !floatingWindowEnabled) {
+        closeFloatingWindow();
+      }
+      return;
+    }
+
+    const syncFloatingWindowWithFocus = () => {
+      const pageFocused = document.hasFocus() && !document.hidden;
+
+      if (pageFocused) {
+        return;
+      }
+
+      if (floatingWindowEnabled || autoFloatingWindowRef.current) {
+        return;
+      }
+
+      void openFloatingWindow()
+        .then(() => {
+          autoFloatingWindowRef.current = true;
+        })
+        .catch((error) => {
+          console.error("Focus-based floating window failed:", error);
+        });
+    };
+
+    syncFloatingWindowWithFocus();
+    document.addEventListener("visibilitychange", syncFloatingWindowWithFocus);
+    window.addEventListener("focus", syncFloatingWindowWithFocus);
+    window.addEventListener("blur", syncFloatingWindowWithFocus);
+
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        syncFloatingWindowWithFocus,
+      );
+      window.removeEventListener("focus", syncFloatingWindowWithFocus);
+      window.removeEventListener("blur", syncFloatingWindowWithFocus);
+    };
+  }, [closeFloatingWindow, floatingWindowEnabled, isActive, openFloatingWindow]);
 
   useEffect(() => {
     void refreshCameraDevices();
@@ -1961,7 +2325,10 @@ export default function App() {
       refreshSpeechSupport();
     };
 
-    window.speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
+    window.speechSynthesis.addEventListener(
+      "voiceschanged",
+      handleVoicesChanged,
+    );
     return () => {
       window.speechSynthesis.removeEventListener(
         "voiceschanged",
@@ -2001,6 +2368,75 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isActive, pill, start, stop]);
 
+  const currentTutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
+
+  useEffect(() => {
+    if (!showTutorial) return;
+
+    if (currentTutorialStep.target === "settings-panel") {
+      setShowSettings(true);
+    }
+
+    if (currentTutorialStep.target === "session-log") {
+      setShowSessionLog(true);
+    }
+  }, [currentTutorialStep.target, showTutorial]);
+
+  useEffect(() => {
+    if (!showTutorial) {
+      setTutorialTargetRect(null);
+      return;
+    }
+
+    let frame = 0;
+
+    const measure = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        setTutorialTargetRect(
+          findVisibleTourTarget(currentTutorialStep.target),
+        );
+      });
+    };
+
+    measure();
+    const deferredMeasure = window.setTimeout(measure, 230);
+
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+
+    return () => {
+      window.clearTimeout(deferredMeasure);
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [currentTutorialStep.target, showSettings, showSessionLog, showTutorial]);
+
+  const closeTutorial = () => {
+    setShowTutorial(false);
+  };
+
+  const openTutorial = () => {
+    setTutorialStepIndex(0);
+    setShowTutorial(true);
+  };
+
+  const goToNextTutorialStep = () => {
+    if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
+      closeTutorial();
+      return;
+    }
+
+    setTutorialStepIndex((index) =>
+      Math.min(index + 1, TUTORIAL_STEPS.length - 1),
+    );
+  };
+
+  const goToPreviousTutorialStep = () => {
+    setTutorialStepIndex((index) => Math.max(index - 1, 0));
+  };
+
   const getScoreColor = (s: number) => {
     if (s > 80) return "text-emerald-400";
     if (s > 60) return "text-amber-400";
@@ -2010,7 +2446,7 @@ export default function App() {
     assessmentTier === "upper_front"
       ? {
           trunk: { label: "Head Offset", unit: "norm" },
-          head: { label: "Forward Lean", unit: "norm" },
+          head: { label: "Head Lean", unit: "norm" },
           shoulder: { label: "Shoulder Level", unit: "norm" },
           thresholds: {
             trunk: UPPER_FRONT_HEAD_OFFSET_THRESHOLD,
@@ -2035,19 +2471,16 @@ export default function App() {
     ? "bg-[#0a0a0c] text-slate-100"
     : "bg-[#eef2f7] text-slate-900";
   const heroCardClass = isDarkTheme
-    ? "bg-gradient-to-br from-white/10 to-transparent border-white/10 hover:bg-white/10"
+    ? "bg-gradient-to-br from-white/[0.08] to-transparent border-white/10 hover:bg-white/[0.08]"
     : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white";
   const stageClass = isDarkTheme
-    ? "bg-slate-900 border-white/5"
+    ? "bg-[#08090c] border-white/5"
     : "bg-white border-slate-200";
   const stageGlassClass = isDarkTheme
     ? "bg-black/45 backdrop-blur-md border-white/10"
     : "bg-white/88 backdrop-blur-md border-slate-200";
-  const sessionLogClass = isDarkTheme
-    ? "bg-black/40 backdrop-blur-xl border-white/10"
-    : "bg-white/92 backdrop-blur-xl border-slate-200";
   const settingsPanelClass = isDarkTheme
-    ? "bg-white/5 backdrop-blur-md border-white/10"
+    ? "bg-black/30 backdrop-blur-md border-white/10"
     : "bg-white/92 backdrop-blur-md border-slate-200";
   const subtleTextClass = isDarkTheme ? "text-white/60" : "text-slate-500";
   const mutedTextClass = isDarkTheme ? "text-white/40" : "text-slate-500";
@@ -2055,11 +2488,14 @@ export default function App() {
   const iconButtonClass = isDarkTheme
     ? "border-white/30 bg-white/10 text-white/80 hover:bg-white hover:text-black"
     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100";
+  const sessionLogIconButtonClass = isDarkTheme
+    ? "border-white/10 bg-black/30 text-white/80 hover:bg-black/45 hover:text-white"
+    : "border-slate-200 bg-white/75 text-slate-700 hover:bg-white hover:text-slate-900";
   const primaryButtonClass = isDarkTheme
     ? "bg-white text-black hover:bg-slate-200 shadow-lg"
     : "bg-slate-900 text-white hover:bg-slate-700 shadow-lg";
   const tutorialOverlayClass = isDarkTheme
-    ? "bg-slate-950/75"
+    ? "bg-black/78"
     : "bg-slate-100/80";
   const themeVars: CSSProperties = {
     color: isDarkTheme ? "#e5edf7" : "#0f172a",
@@ -2070,7 +2506,106 @@ export default function App() {
       window as Window & {
         documentPictureInPicture?: DocumentPictureInPictureApi;
       }
-    ).documentPictureInPicture?.requestWindow;
+        ).documentPictureInPicture?.requestWindow;
+
+  const metricsPaused = !isActive || pill === "detecting" || trackingHealth < 45;
+
+  const autoPipStatusLabel =
+    autoPipStatus === "supported"
+      ? "Auto PiP supported"
+      : autoPipStatus === "manual_only"
+        ? "Manual only"
+        : autoPipStatus === "blocked"
+          ? "Auto PiP blocked"
+          : "Unsupported";
+  const autoPipStatusMessage =
+    autoPipStatus === "supported"
+      ? "This browser can auto-open the floating window during an active session when the tab or window moves out of focus."
+      : autoPipStatus === "manual_only"
+        ? "Manual floating window works here, but this browser context does not expose the full automatic PiP hooks."
+        : autoPipStatus === "blocked"
+          ? "The floating window works manually, but this browser appears to reject the automatic PiP action for this page."
+          : "This browser does not support the floating document window here. Chromium-based browsers on HTTPS support it best.";
+  const tutorialCardWidth =
+    typeof window === "undefined" ? 360 : Math.min(360, window.innerWidth - 32);
+  const tutorialHighlightStyle: CSSProperties | undefined = tutorialTargetRect
+    ? {
+        top: tutorialTargetRect.top - 10,
+        left: tutorialTargetRect.left - 10,
+        width: tutorialTargetRect.width + 20,
+        height: tutorialTargetRect.height + 20,
+      }
+    : undefined;
+  const tutorialCardStyle: CSSProperties =
+    typeof window !== "undefined" && tutorialTargetRect
+      ? (() => {
+          const gap = 18;
+          const cardHeight = 300;
+          const viewportPadding = 16;
+          const viewportWidth = window.innerWidth;
+          const viewportHeight = window.innerHeight;
+          const fitsRight =
+            tutorialTargetRect.right + gap + tutorialCardWidth <=
+            viewportWidth - viewportPadding;
+          const fitsLeft =
+            tutorialTargetRect.left - gap - tutorialCardWidth >= viewportPadding;
+          const fitsBelow =
+            tutorialTargetRect.bottom + gap + cardHeight <=
+            viewportHeight - viewportPadding;
+          const fitsAbove =
+            tutorialTargetRect.top - gap - cardHeight >= viewportPadding;
+
+          let left = clamp(
+            tutorialTargetRect.left,
+            viewportPadding,
+            viewportWidth - tutorialCardWidth - viewportPadding,
+          );
+          let top = clamp(
+            tutorialTargetRect.bottom + gap,
+            viewportPadding,
+            viewportHeight - cardHeight - viewportPadding,
+          );
+
+          if (fitsRight || fitsLeft) {
+            left = fitsRight
+              ? tutorialTargetRect.right + gap
+              : tutorialTargetRect.left - tutorialCardWidth - gap;
+            top = clamp(
+              tutorialTargetRect.top +
+                tutorialTargetRect.height / 2 -
+                cardHeight / 2,
+              viewportPadding,
+              viewportHeight - cardHeight - viewportPadding,
+            );
+          } else if (fitsBelow || fitsAbove) {
+            top = fitsBelow
+              ? tutorialTargetRect.bottom + gap
+              : tutorialTargetRect.top - cardHeight - gap;
+            left = clamp(
+              tutorialTargetRect.left,
+              viewportPadding,
+              viewportWidth - tutorialCardWidth - viewportPadding,
+            );
+          }
+
+          return {
+            width: tutorialCardWidth,
+            left,
+            top,
+          };
+        })()
+      : {
+          width: tutorialCardWidth,
+          left:
+            typeof window === "undefined"
+              ? 16
+              : Math.max(16, (window.innerWidth - tutorialCardWidth) / 2),
+          top:
+            typeof window === "undefined"
+              ? 16
+              : Math.max(16, window.innerHeight / 2 - 150),
+        };
+  const visibleFeedbacks = feedbacks.slice(-5).reverse();
 
   return (
     <div
@@ -2090,7 +2625,9 @@ export default function App() {
               >
                 Uprightly
               </h1>
-              <p className={`text-sm font-medium uppercase tracking-[0.2em] ${mutedTextClass}`}>
+              <p
+                className={`text-sm font-medium uppercase tracking-[0.2em] ${mutedTextClass}`}
+              >
                 AI Posture Assistant
               </p>
             </div>
@@ -2098,6 +2635,7 @@ export default function App() {
             <button
               onClick={isActive ? stop : () => void start()}
               disabled={isLoading}
+              data-tour="start-session"
               className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
@@ -2105,7 +2643,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setShowTutorial(true)}
+              onClick={openTutorial}
               className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-semibold border transition-all ${iconButtonClass}`}
             >
               <BookOpen size={18} />
@@ -2114,25 +2652,35 @@ export default function App() {
 
             <div className="mt-auto flex flex-col gap-4">
               <div
+                data-tour="posture-score"
                 className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
               >
-                <div className={`flex items-center justify-between mb-1 z-10 ${subtleTextClass}`}>
+                <div
+                  className={`flex items-center justify-between mb-1 z-10 ${subtleTextClass}`}
+                >
                   <span className="text-xs font-medium uppercase tracking-wider">
                     Posture Score
                   </span>
                   {score > 70 ? (
                     <CheckCircle2 size={14} className="text-emerald-400" />
                   ) : (
-                    <AlertCircle size={14} className={isDarkTheme ? "text-white" : "text-slate-600"} />
+                    <AlertCircle
+                      size={14}
+                      className={isDarkTheme ? "text-white" : "text-slate-600"}
+                    />
                   )}
                 </div>
 
                 <div className="flex items-center justify-between mt-1 z-10">
                   <div className="flex items-baseline gap-1">
-                    <span className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}>
+                    <span
+                      className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}
+                    >
                       {score}
                     </span>
-                    <span className={`text-xs font-medium ${mutedTextClass}`}>/ 100</span>
+                    <span className={`text-xs font-medium ${mutedTextClass}`}>
+                      / 100
+                    </span>
                   </div>
                 </div>
 
@@ -2145,7 +2693,9 @@ export default function App() {
                       stroke="currentColor"
                       strokeWidth="8"
                       fill="transparent"
-                      className={isDarkTheme ? "text-white/10" : "text-slate-200"}
+                      className={
+                        isDarkTheme ? "text-white/10" : "text-slate-200"
+                      }
                     />
                     <circle
                       cx="40"
@@ -2163,6 +2713,7 @@ export default function App() {
               </div>
 
               <MetricCard
+                paused={metricsPaused}
                 theme={theme}
                 label={metricMeta.trunk.label}
                 value={metrics.trunkAngle.toFixed(1)}
@@ -2172,9 +2723,13 @@ export default function App() {
                 rawValue={metrics.trunkAngle}
                 signedValue={signedMetrics.trunkAngle}
                 threshold={metricMeta.thresholds.trunk}
-                progress={metricQuality(metrics.trunkAngle, metricMeta.thresholds.trunk)}
+                progress={metricQuality(
+                  metrics.trunkAngle,
+                  metricMeta.thresholds.trunk,
+                )}
               />
               <MetricCard
+                paused={metricsPaused}
                 theme={theme}
                 label={metricMeta.head.label}
                 value={metrics.headForward.toFixed(2)}
@@ -2184,9 +2739,13 @@ export default function App() {
                 rawValue={metrics.headForward}
                 signedValue={signedMetrics.headForward}
                 threshold={metricMeta.thresholds.head}
-                progress={metricQuality(metrics.headForward, metricMeta.thresholds.head)}
+                progress={metricQuality(
+                  metrics.headForward,
+                  metricMeta.thresholds.head,
+                )}
               />
               <MetricCard
+                paused={metricsPaused}
                 theme={theme}
                 label={metricMeta.shoulder.label}
                 value={metrics.shoulderTilt.toFixed(2)}
@@ -2196,13 +2755,21 @@ export default function App() {
                 rawValue={metrics.shoulderTilt}
                 signedValue={signedMetrics.shoulderTilt}
                 threshold={metricMeta.thresholds.shoulder}
-                progress={metricQuality(metrics.shoulderTilt, metricMeta.thresholds.shoulder)}
+                progress={metricQuality(
+                  metrics.shoulderTilt,
+                  metricMeta.thresholds.shoulder,
+                )}
               />
             </div>
           </div>
 
-          <div className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}>
-            <div className={`relative flex-1 rounded-[2rem] overflow-hidden border shadow-2xl group transition-colors duration-300 ${stageClass}`}>
+          <div
+            className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}
+          >
+            <div
+              data-tour="camera-stage"
+              className={`relative flex-1 rounded-[2rem] overflow-hidden border shadow-2xl group transition-colors duration-300 ${stageClass}`}
+            >
               <video
                 ref={videoRef}
                 autoPlay
@@ -2216,15 +2783,28 @@ export default function App() {
               />
 
               {!isActive ? (
-                <div className={`absolute inset-0 flex flex-col items-center justify-center backdrop-blur-sm z-10 ${isDarkTheme ? "bg-slate-900/50" : "bg-white/55"}`}>
-                  <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 ${isDarkTheme ? "bg-white/5" : "bg-slate-100"}`}>
-                    <Camera size={32} className={isDarkTheme ? "text-white/20" : "text-slate-400"} />
+                <div
+                  className={`absolute inset-0 flex flex-col items-center justify-center backdrop-blur-sm z-10 ${isDarkTheme ? "bg-black/45" : "bg-white/55"}`}
+                >
+                  <div
+                    className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 ${isDarkTheme ? "bg-white/5" : "bg-slate-100"}`}
+                  >
+                    <Camera
+                      size={32}
+                      className={
+                        isDarkTheme ? "text-white/20" : "text-slate-400"
+                      }
+                    />
                   </div>
-                  <p className={`font-medium ${mutedTextClass}`}>Camera Feed Inactive</p>
+                  <p className={`font-medium ${mutedTextClass}`}>
+                    Camera Feed Inactive
+                  </p>
                 </div>
               ) : null}
 
-              <div className={`absolute top-4 left-4 right-4 z-20 lg:hidden rounded-2xl px-4 py-3 flex items-center justify-end gap-3 border ${stageGlassClass}`}>
+              <div
+                className={`absolute top-4 left-4 right-4 z-20 lg:hidden rounded-2xl px-4 py-3 flex items-center justify-end gap-3 border ${stageGlassClass}`}
+              >
                 <div className="flex gap-3">
                   <button
                     onClick={() => setShowSettings((v) => !v)}
@@ -2236,6 +2816,7 @@ export default function App() {
                   <button
                     onClick={isActive ? stop : () => void start()}
                     disabled={isLoading}
+                    data-tour="start-session"
                     className={`lg:hidden flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
@@ -2244,8 +2825,12 @@ export default function App() {
                 </div>
               </div>
 
-              <div className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}>
-                <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-dashed rounded-full ${isDarkTheme ? "border-white/20" : "border-slate-300"}`} />
+              <div
+                className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}
+              >
+                <div
+                  className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-dashed rounded-full ${isDarkTheme ? "border-white/20" : "border-slate-300"}`}
+                />
               </div>
 
               <div className="absolute left-6 bottom-6 z-20">
@@ -2254,112 +2839,230 @@ export default function App() {
                     <div className="text-sm font-bold uppercase tracking-wider">
                       Stability {stabilityScore}%
                     </div>
-                    <div className={`text-[11px] font-semibold uppercase tracking-wider ${quietTextClass}`}>
+                    <div
+                      className={`text-[11px] font-semibold uppercase tracking-wider ${quietTextClass}`}
+                    >
                       Tracking {trackingHealth}%
                     </div>
                   </>
-                ) : (
-                  <>
-                    <div className="text-sm font-bold uppercase tracking-wider">
-                      Session Standby
-                    </div>
-                    <div className={`text-[11px] font-semibold uppercase tracking-wider ${subtleTextClass}`}>
-                      Start a session to view live metrics
-                    </div>
-                  </>
-                )}
+                ) : null}
               </div>
 
-              <div className={`absolute right-4 top-4 bottom-4 z-30 shadow-2xl transition-all duration-200 ease-in-out ${showSessionLog ? "w-72 lg:w-80" : "w-14"}`}>
-                <div className={`h-full rounded-2xl overflow-hidden border ${showSessionLog ? "flex flex-col" : "flex items-start justify-center"} ${sessionLogClass}`}>
-                  {showSessionLog ? (
-                    <>
-                      <div className={`px-5 py-4 border-b flex items-center justify-between ${isDarkTheme ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50/90"}`}>
-                        <div className="flex items-center gap-2">
-                          <Bell size={16} className={isDarkTheme ? "text-white/90" : "text-slate-700"} />
-                          <h3 className="font-bold text-sm uppercase tracking-wider">Session Log</h3>
+              <div
+                data-tour="session-log"
+                className={`absolute right-0 top-0 bottom-0 z-30 transition-all duration-300 ease-out ${showSessionLog ? "w-72 lg:w-80" : "w-16"}`}
+              >
+                {showSessionLog ? (
+                  <div className="relative h-full">
+                    <div
+                      className="absolute inset-y-0 right-0 w-[38rem] pointer-events-none"
+                      style={{
+                        background:
+                          isDarkTheme
+                            ? "linear-gradient(to left, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.32) 16%, rgba(255,255,255,0.24) 30%, rgba(255,255,255,0.16) 46%, rgba(255,255,255,0.1) 62%, rgba(255,255,255,0.05) 78%, rgba(255,255,255,0.02) 90%, rgba(255,255,255,0) 100%)"
+                            : "linear-gradient(to left, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.88) 16%, rgba(0,0,0,0.78) 30%, rgba(0,0,0,0.64) 46%, rgba(0,0,0,0.46) 62%, rgba(0,0,0,0.26) 78%, rgba(0,0,0,0.1) 90%, rgba(0,0,0,0) 100%)",
+                      }}
+                    />
+                    <div
+                      className={`absolute inset-y-0 right-0 w-full ${
+                        isDarkTheme
+                          ? "bg-gradient-to-l from-white/88 via-white/42 via-45% to-transparent"
+                          : "bg-gradient-to-l from-black/78 via-black/42 via-45% to-transparent"
+                      }`}
+                    />
+                    <div className="absolute top-4 right-4 left-12 z-10 pointer-events-none">
+                      <div className="ml-auto flex w-full max-w-[22.5rem] items-center justify-between gap-2 pointer-events-auto">
+                        <div
+                          className={`flex flex-shrink-0 items-center gap-2 rounded-full border px-3 py-2 ${isDarkTheme ? "border-white/10 bg-black/30 text-white/80" : "border-slate-200 bg-white/75 text-slate-700"} backdrop-blur-md`}
+                        >
+                          <Bell size={14} />
+                          <span className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.22em]">
+                            Session Log
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
+                            onClick={() => setShowSettings((v) => !v)}
+                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
+                            title="Toggle Settings"
+                          >
+                            <Settings2 size={16} />
+                          </button>
+                          <button
                             onClick={() => setShowSessionLog(false)}
-                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
+                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
                             title="Hide Session Log"
                             aria-label="Hide Session Log"
                           >
                             <PanelRightClose size={16} />
                           </button>
-                          <button
-                            onClick={() => setShowSettings((v) => !v)}
-                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
-                            title="Toggle Settings"
-                          >
-                            <Settings2 size={16} />
-                          </button>
                         </div>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full">
-                        {!isActive && (
-                          <div className="h-full flex flex-col items-center justify-center text-center opacity-70 space-y-3">
-                            <Bell size={24} className={isDarkTheme ? "text-white/40" : "text-slate-400"} />
-                            <span className={`text-xs font-medium ${quietTextClass}`}>
-                              Monitoring paused.
-                              <br />
-                              Start session to view feedback.
-                            </span>
-                          </div>
-                        )}
-                        {feedbacks.map((f) => (
-                          <div key={f.id} className={`p-3 rounded-xl border ${f.bg} backdrop-blur-md transition-all`}>
-                            <div className="flex justify-between items-center mb-1">
-                              <span className={`text-xs font-bold ${f.color}`}>{f.title}</span>
-                              <span className={`text-[10px] ${mutedTextClass}`}>{f.time}</span>
-                            </div>
-                            <p className={`text-[13px] leading-relaxed ${isDarkTheme ? "text-white/90" : "text-slate-700"}`}>
-                              {f.text}
-                            </p>
-                          </div>
-                        ))}
-                        <div ref={chatEndRef} />
-                      </div>
-
-                      <div className={`p-4 border-t ${isDarkTheme ? "bg-white/5 border-white/10" : "bg-slate-50/90 border-slate-200"}`}>
-                        <div className={`border rounded-xl px-3 py-2.5 flex items-center gap-2 ${isDarkTheme ? "bg-black/50 border-white/10" : "bg-white border-slate-200"}`}>
-                          <div className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-500 animate-pulse" : isDarkTheme ? "bg-white/20" : "bg-slate-300"}`} />
-                          <span className={`text-xs ${quietTextClass}`}>{isActive ? feedback : "System standby"}</span>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-start py-4 gap-3">
-                      <button
-                        onClick={() => setShowSessionLog(true)}
-                        className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
-                        title="Show Session Log"
-                        aria-label="Show Session Log"
-                      >
-                        <PanelRightOpen size={16} />
-                      </button>
-                      <div className="flex items-center justify-center">
-                        <span className={`text-[10px] font-bold uppercase tracking-[0.25em] [writing-mode:vertical-rl] rotate-180 ${quietTextClass}`}>
-                          Session Log
-                        </span>
                       </div>
                     </div>
-                  )}
-                </div>
+
+                    <div
+                      className="absolute top-20 bottom-4 right-4 left-12 z-10 flex items-end justify-end pointer-events-none"
+                      style={{
+                        maskImage:
+                          "linear-gradient(to top, black 0%, black 58%, rgba(0,0,0,0.78) 72%, rgba(0,0,0,0.28) 84%, transparent 100%)",
+                        WebkitMaskImage:
+                          "linear-gradient(to top, black 0%, black 58%, rgba(0,0,0,0.78) 72%, rgba(0,0,0,0.28) 84%, transparent 100%)",
+                      }}
+                    >
+                      {!isActive && feedbacks.length === 0 ? (
+                        <div
+                          className={`max-w-[17rem] rounded-2xl border px-4 py-3 ${
+                            isDarkTheme
+                              ? "border-white/10 bg-[#05060a] text-white/78"
+                              : "border-slate-300 bg-white text-slate-700 shadow-[0_18px_45px_-30px_rgba(15,23,42,0.24)]"
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold uppercase tracking-[0.22em] opacity-75">
+                            Standby
+                          </div>
+                          <div className="mt-1 text-sm leading-relaxed">
+                            Start a session to see live posture feedback here.
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-full max-w-[22.5rem] flex flex-col-reverse gap-3">
+                          {visibleFeedbacks.map((f, index) => {
+                            const opacity =
+                              index === 0
+                                ? 1
+                                : index === 1
+                                  ? 0.92
+                                  : index === 2
+                                    ? 0.78
+                                    : index === 3
+                                      ? 0.58
+                                      : 0.38;
+                            const translateY =
+                              index === 0
+                                ? 0
+                                : index === 1
+                                  ? -2
+                                  : index === 2
+                                    ? -6
+                                    : index === 3
+                                      ? -10
+                                      : -14;
+
+                            return (
+                              <div
+                                key={f.id}
+                                className={`rounded-2xl border px-4 py-3 transition-all ${
+                                  isDarkTheme
+                                    ? "border-transparent bg-black/70"
+                                    : "border-slate-300 bg-white shadow-[0_22px_45px_-30px_rgba(15,23,42,0.24)]"
+                                }`}
+                                style={{
+                                  opacity,
+                                  transform: `translateY(${translateY}px) scale(${1 - index * 0.02})`,
+                                }}
+                              >
+                                <div className="flex justify-between items-center mb-1.5 gap-3">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {f.type === "success" ? (
+                                      <CheckCircle2
+                                        size={14}
+                                        className="text-emerald-400 flex-shrink-0"
+                                      />
+                                    ) : f.type === "warning" ? (
+                                      <AlertCircle
+                                        size={14}
+                                        className="text-amber-400 flex-shrink-0"
+                                      />
+                                    ) : f.type === "critical" ? (
+                                      <AlertCircle
+                                        size={14}
+                                        className="text-rose-400 flex-shrink-0"
+                                      />
+                                    ) : (
+                                      <Bell
+                                        size={14}
+                                        className="text-sky-400 flex-shrink-0"
+                                      />
+                                    )}
+                                    <span
+                                      className={`text-[11px] font-extrabold uppercase tracking-[0.16em] ${
+                                        isDarkTheme
+                                          ? "text-white/92"
+                                          : "text-slate-800"
+                                      }`}
+                                    >
+                                      {f.title}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={`text-[10px] ${
+                                      isDarkTheme
+                                        ? "text-white/45"
+                                        : "text-slate-500"
+                                    }`}
+                                  >
+                                    {f.time}
+                                  </span>
+                                </div>
+                                <p
+                                  className={`text-[13px] leading-relaxed ${
+                                    isDarkTheme
+                                      ? "text-white/92"
+                                      : "text-slate-700"
+                                  }`}
+                                >
+                                  {f.text}
+                                </p>
+                              </div>
+                            );
+                          })}
+                          <div ref={chatEndRef} />
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                ) : (
+                  <div className="absolute top-4 right-4 z-10 flex flex-col items-center gap-3 pointer-events-auto">
+                    <button
+                      onClick={() => setShowSessionLog(true)}
+                      className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
+                      title="Show Session Log"
+                      aria-label="Show Session Log"
+                    >
+                      <PanelRightOpen size={16} />
+                    </button>
+                    <button
+                      onClick={() => setShowSettings((v) => !v)}
+                      className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
+                      title="Toggle Settings"
+                    >
+                      <Settings2 size={16} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out ${showSettings ? "w-80 opacity-100" : "w-0 opacity-0"}`}>
+            <div
+              className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out ${showSettings ? "w-80 opacity-100" : "w-0 opacity-0"}`}
+            >
               <div
                 aria-hidden={!showSettings}
+                data-tour="settings-panel"
                 className={`w-80 h-full rounded-[2rem] p-6 flex flex-col overflow-y-auto transition-transform duration-200 ease-in-out border ${showSettings ? "translate-x-0 pointer-events-auto" : "translate-x-3 pointer-events-none"} ${settingsPanelClass}`}
               >
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-2">
-                    <Settings2 size={18} className={isDarkTheme ? "text-white/60" : "text-slate-500"} />
-                    <h3 className="font-bold text-sm uppercase tracking-wider">Settings</h3>
+                    <Settings2
+                      size={18}
+                      className={
+                        isDarkTheme ? "text-white/60" : "text-slate-500"
+                      }
+                    />
+                    <h3 className="font-bold text-sm uppercase tracking-wider">
+                      Settings
+                    </h3>
                   </div>
                   <button
                     onClick={() => setShowSettings(false)}
@@ -2374,8 +3077,14 @@ export default function App() {
                 <div className="space-y-8">
                   <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Camera Source</label>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                      <label
+                        className={`text-xs font-semibold ${subtleTextClass}`}
+                      >
+                        Camera Source
+                      </label>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                      >
                         {cameraDevices.length || 0} detected
                       </span>
                     </div>
@@ -2393,34 +3102,51 @@ export default function App() {
                       }}
                       className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white hover:bg-white/10" : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"}`}
                     >
-                      {cameraDevices.length === 0 ? <option value="">No camera detected yet</option> : null}
+                      {cameraDevices.length === 0 ? (
+                        <option value="">No camera detected yet</option>
+                      ) : null}
                       {cameraDevices.map((camera) => (
                         <option
                           key={camera.id}
                           value={camera.id}
-                          className={isDarkTheme ? "bg-slate-900 text-white" : "bg-white text-slate-900"}
+                          className={
+                            isDarkTheme
+                              ? "bg-slate-900 text-white"
+                              : "bg-white text-slate-900"
+                          }
                         >
                           {camera.label}
                         </option>
                       ))}
                     </select>
-                    <p className={`text-[11px] leading-relaxed ${mutedTextClass}`}>
-                      If labels are blank, allow camera access first, then reopen this panel or start a session.
+                    <p
+                      className={`text-[11px] leading-relaxed ${mutedTextClass}`}
+                    >
+                      If labels are blank, allow camera access first, then
+                      reopen this panel or start a session.
                     </p>
                   </div>
 
                   <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Theme</label>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                      <label
+                        className={`text-xs font-semibold ${subtleTextClass}`}
+                      >
+                        Theme
+                      </label>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                      >
                         {theme === "dark" ? "Dark Mode" : "Light Mode"}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      {([
-                        ["dark", "Dark", Moon],
-                        ["light", "Light", Sun],
-                      ] as const).map(([mode, label, Icon]) => (
+                      {(
+                        [
+                          ["dark", "Dark", Moon],
+                          ["light", "Light", Sun],
+                        ] as const
+                      ).map(([mode, label, Icon]) => (
                         <button
                           key={mode}
                           onClick={() => setTheme(mode)}
@@ -2443,8 +3169,16 @@ export default function App() {
 
                   <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Audio Feedback</label>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>5s cooldown</span>
+                      <label
+                        className={`text-xs font-semibold ${subtleTextClass}`}
+                      >
+                        Audio Feedback
+                      </label>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                      >
+                        5s cooldown
+                      </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {(["off", "voice"] as const).map((mode) => (
@@ -2465,7 +3199,9 @@ export default function App() {
                         </button>
                       ))}
                     </div>
-                    <div className={`flex justify-between items-center px-1 text-[11px] ${mutedTextClass}`}>
+                    <div
+                      className={`flex justify-between items-center px-1 text-[11px] ${mutedTextClass}`}
+                    >
                       <span>
                         Status:{" "}
                         {speechStatus === "ready"
@@ -2481,27 +3217,40 @@ export default function App() {
                     <button
                       onClick={() => {
                         setAudioMode("voice");
-                        speakFeedback("good", "That looks good. Keep it there.", "test-voice");
+                        speakFeedback(
+                          "good",
+                          "That looks good. Keep it there.",
+                          "test-voice",
+                        );
                       }}
                       className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"}`}
                     >
                       <Volume2 size={16} />
                       Test Voice
                     </button>
-                    <p className={`text-[11px] leading-relaxed ${mutedTextClass}`}>
-                      Voice prompts play only on stable posture changes and are suppressed during weak tracking.
+                    <p
+                      className={`text-[11px] leading-relaxed ${mutedTextClass}`}
+                    >
+                      Voice prompts play only on stable posture changes and are
+                      suppressed during weak tracking.
                     </p>
                   </div>
 
                   <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Tutorial</label>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                      <label
+                        className={`text-xs font-semibold ${subtleTextClass}`}
+                      >
+                        Tutorial
+                      </label>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                      >
                         Reopen anytime
                       </span>
                     </div>
                     <button
-                      onClick={() => setShowTutorial(true)}
+                      onClick={openTutorial}
                       className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"}`}
                     >
                       <BookOpen size={16} />
@@ -2511,8 +3260,14 @@ export default function App() {
 
                   <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
-                      <label className={`text-xs font-semibold ${subtleTextClass}`}>Floating Window</label>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}>
+                      <label
+                        className={`text-xs font-semibold ${subtleTextClass}`}
+                      >
+                        Floating Window
+                      </label>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                      >
                         {floatingWindowReady ? "Open" : "Optional"}
                       </span>
                     </div>
@@ -2535,20 +3290,42 @@ export default function App() {
                       }`}
                     >
                       <Monitor size={16} />
-                      {floatingWindowEnabled ? "Close Floating Window" : "Open Floating Window"}
+                      {floatingWindowEnabled
+                        ? "Close Floating Window"
+                        : "Open Floating Window"}
                     </button>
-                    <p className={`text-[11px] leading-relaxed ${mutedTextClass}`}>
+                    <p
+                      className={`text-[11px] leading-relaxed ${mutedTextClass}`}
+                    >
                       {floatingWindowSupported
-                        ? "Opens a compact always-on-top status window. You can resize it from the window edges to make it larger or smaller."
-                        : "This browser does not support floating document windows here. Chromium-based browsers on HTTPS support it best."}
+                        ? "While a session is running, the floating window stays hidden until you switch away or minimize the browser, then it tries to open once and stays available for the rest of the session. You can still open or close it manually here."
+                        : autoPipStatusMessage}
                     </p>
+                    <div
+                      className={`flex justify-between items-center px-1 text-[11px] ${mutedTextClass}`}
+                    >
+                      <span>Status: {autoPipStatusLabel}</span>
+                      <span>{isActive ? "Session live" : "Session idle"}</span>
+                    </div>
+                    {floatingWindowSupported ? (
+                      <p
+                        className={`text-[11px] leading-relaxed ${mutedTextClass}`}
+                      >
+                        {autoPipStatusMessage}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
                 <div className="mt-auto pt-6">
-                  <div className={`p-4 rounded-2xl border ${isDarkTheme ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"}`}>
-                    <p className={`text-[10px] leading-relaxed italic ${mutedTextClass}`}>
-                      Settings now focus on the essentials: camera source, dark or light mode, audio feedback, and voice testing.
+                  <div
+                    className={`p-4 rounded-2xl border ${isDarkTheme ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"}`}
+                  >
+                    <p
+                      className={`text-[10px] leading-relaxed italic ${mutedTextClass}`}
+                    >
+                      Settings now focus on the essentials: camera source, dark
+                      or light mode, audio feedback, and voice testing.
                     </p>
                   </div>
                 </div>
@@ -2558,9 +3335,16 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-2 lg:hidden gap-4 flex-shrink-0">
-          <div className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}>
-            <div className={`flex items-center justify-between z-10 ${subtleTextClass}`}>
-              <span className="text-xs font-medium uppercase tracking-wider">Posture Score</span>
+          <div
+            data-tour="posture-score"
+            className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
+          >
+            <div
+              className={`flex items-center justify-between z-10 ${subtleTextClass}`}
+            >
+              <span className="text-xs font-medium uppercase tracking-wider">
+                Posture Score
+              </span>
               {score > 70 ? (
                 <CheckCircle2 size={14} className="text-emerald-400" />
               ) : (
@@ -2570,10 +3354,14 @@ export default function App() {
 
             <div className="flex items-center justify-between mt-1 z-10">
               <div className="flex items-baseline gap-1">
-                <span className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}>
+                <span
+                  className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}
+                >
                   {score}
                 </span>
-                <span className={`text-xs font-medium ${mutedTextClass}`}>/ 100</span>
+                <span className={`text-xs font-medium ${mutedTextClass}`}>
+                  / 100
+                </span>
               </div>
             </div>
 
@@ -2604,6 +3392,7 @@ export default function App() {
           </div>
 
           <MetricCard
+            paused={metricsPaused}
             theme={theme}
             label={metricMeta.trunk.label}
             value={metrics.trunkAngle.toFixed(1)}
@@ -2613,9 +3402,13 @@ export default function App() {
             rawValue={metrics.trunkAngle}
             signedValue={signedMetrics.trunkAngle}
             threshold={metricMeta.thresholds.trunk}
-            progress={metricQuality(metrics.trunkAngle, metricMeta.thresholds.trunk)}
+            progress={metricQuality(
+              metrics.trunkAngle,
+              metricMeta.thresholds.trunk,
+            )}
           />
           <MetricCard
+            paused={metricsPaused}
             theme={theme}
             label={metricMeta.head.label}
             value={metrics.headForward.toFixed(2)}
@@ -2625,9 +3418,13 @@ export default function App() {
             rawValue={metrics.headForward}
             signedValue={signedMetrics.headForward}
             threshold={metricMeta.thresholds.head}
-            progress={metricQuality(metrics.headForward, metricMeta.thresholds.head)}
+            progress={metricQuality(
+              metrics.headForward,
+              metricMeta.thresholds.head,
+            )}
           />
           <MetricCard
+            paused={metricsPaused}
             theme={theme}
             label={metricMeta.shoulder.label}
             value={metrics.shoulderTilt.toFixed(2)}
@@ -2637,7 +3434,10 @@ export default function App() {
             rawValue={metrics.shoulderTilt}
             signedValue={signedMetrics.shoulderTilt}
             threshold={metricMeta.thresholds.shoulder}
-            progress={metricQuality(metrics.shoulderTilt, metricMeta.thresholds.shoulder)}
+            progress={metricQuality(
+              metrics.shoulderTilt,
+              metricMeta.thresholds.shoulder,
+            )}
           />
         </div>
       </div>
@@ -2645,7 +3445,7 @@ export default function App() {
       {floatingRootRef.current
         ? createPortal(
             <FloatingStatusPanel
-              theme={theme}
+              compact={isActive && isPageFocused && !floatingWindowEnabled}
               isActive={isActive}
               pill={pill}
               score={score}
@@ -2656,104 +3456,94 @@ export default function App() {
         : null}
 
       {showTutorial ? (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}>
-          <div className={`w-full max-w-4xl rounded-[2rem] border shadow-2xl overflow-hidden ${isDarkTheme ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
-            <div className="grid lg:grid-cols-[1.15fr_0.85fr]">
-              <div className={`p-8 lg:p-10 ${isDarkTheme ? "bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900" : "bg-gradient-to-br from-slate-50 via-white to-slate-100"}`}>
-                <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.22em] text-sky-500">
-                  <BookOpen size={16} />
-                  Quick Tutorial
-                </div>
-                <h2 className="mt-4 text-3xl lg:text-4xl font-black tracking-tight">
-                  Start posture checks without calibration screens.
-                </h2>
-                <p className={`mt-4 max-w-xl text-sm leading-7 ${quietTextClass}`}>
-                  Uprightly now opens with a simpler flow. You can start the camera immediately, switch themes, choose your camera, and enable voice feedback from the settings drawer.
-                </p>
-                <div className="mt-8 grid gap-4">
-                  {[
-                    {
-                      icon: <Camera size={18} />,
-                      title: "Allow camera access",
-                      text: "Pick your camera in Settings if you have more than one connected.",
-                    },
-                    {
-                      icon: <Monitor size={18} />,
-                      title: "Stay centered in frame",
-                      text: "Keep your face and shoulders visible so tracking stays stable.",
-                    },
-                    {
-                      icon: <Volume2 size={18} />,
-                      title: "Use feedback when needed",
-                      text: "Voice prompts and the session log will tell you when posture changes.",
-                    },
-                  ].map((step, index) => (
-                    <div key={step.title} className={`rounded-2xl border p-4 ${isDarkTheme ? "border-white/10 bg-white/5" : "border-slate-200 bg-white"}`}>
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${isDarkTheme ? "bg-sky-500/15 text-sky-300" : "bg-sky-100 text-sky-700"}`}>
-                          {step.icon}
-                        </div>
-                        <div>
-                          <div className={`text-[11px] font-bold uppercase tracking-[0.2em] ${mutedTextClass}`}>
-                            Step {index + 1}
-                          </div>
-                          <div className="font-bold">{step.title}</div>
-                        </div>
-                      </div>
-                      <p className={`mt-3 text-sm leading-6 ${quietTextClass}`}>{step.text}</p>
-                    </div>
-                  ))}
-                </div>
+        <div className="fixed inset-0 z-50 pointer-events-none">
+          {tutorialHighlightStyle ? (
+            <div
+              className={`fixed rounded-[1.75rem] border-2 transition-all duration-200 ${isDarkTheme ? "border-sky-300" : "border-sky-600"}`}
+              style={{
+                ...tutorialHighlightStyle,
+                boxShadow: `0 0 0 9999px ${isDarkTheme ? "rgba(2, 6, 23, 0.78)" : "rgba(241, 245, 249, 0.82)"}`,
+              }}
+            />
+          ) : (
+            <div
+              className={`fixed inset-0 backdrop-blur-md ${tutorialOverlayClass}`}
+            />
+          )}
+
+          <div
+            className={`fixed pointer-events-auto rounded-2xl border p-5 shadow-2xl transition-all duration-200 ${isDarkTheme ? "border-white/10 bg-[#040507] text-white" : "border-slate-200 bg-white text-slate-900"}`}
+            style={tutorialCardStyle}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.22em] text-sky-500">
+                <BookOpen size={15} />
+                Guided Tour
+              </div>
+              <button
+                onClick={closeTutorial}
+                className={`-mt-1 flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
+                aria-label="Close tutorial"
+                title="Close tutorial"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div
+              className={`mt-3 text-[11px] font-bold uppercase tracking-[0.2em] ${mutedTextClass}`}
+            >
+              Step {tutorialStepIndex + 1} of {TUTORIAL_STEPS.length}
+            </div>
+            <h2 className="mt-2 text-xl font-black tracking-tight">
+              {currentTutorialStep.title}
+            </h2>
+            <p className={`mt-3 text-sm leading-6 ${quietTextClass}`}>
+              {currentTutorialStep.body}
+            </p>
+
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                {TUTORIAL_STEPS.map((step, index) => (
+                  <button
+                    key={step.target}
+                    onClick={() => setTutorialStepIndex(index)}
+                    className={`h-2.5 rounded-full transition-all ${
+                      index === tutorialStepIndex
+                        ? isDarkTheme
+                          ? "w-6 bg-sky-300"
+                          : "w-6 bg-sky-600"
+                        : isDarkTheme
+                          ? "w-2.5 bg-white/20 hover:bg-white/35"
+                          : "w-2.5 bg-slate-300 hover:bg-slate-400"
+                    }`}
+                    aria-label={`Go to tutorial step ${index + 1}`}
+                  />
+                ))}
               </div>
 
-              <div className={`p-8 lg:p-10 border-t lg:border-t-0 lg:border-l ${isDarkTheme ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/80"}`}>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold">Before you begin</h3>
-                  <button
-                    onClick={() => setShowTutorial(false)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
-                  >
-                    Skip
-                  </button>
-                </div>
-
-                <div className="mt-6 space-y-3">
-                  {[
-                    "Use Start Session to begin live monitoring right away.",
-                    "Open Settings for camera source, light or dark mode, audio feedback, and voice test.",
-                    "Reopen this tutorial anytime from the sidebar or settings panel.",
-                  ].map((item) => (
-                    <div key={item} className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${isDarkTheme ? "border-white/10 bg-black/20" : "border-slate-200 bg-white"}`}>
-                      {item}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-8 grid gap-3">
-                  <button
-                    onClick={() => {
-                      setShowTutorial(false);
-                      if (!showSettings) {
-                        setShowSettings(true);
-                      }
-                    }}
-                    className={`w-full rounded-2xl px-4 py-3 font-semibold border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white hover:bg-white/10" : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"}`}
-                  >
-                    Review Settings
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowTutorial(false);
-                      if (!isActive) {
-                        void start();
-                      }
-                    }}
-                    disabled={isLoading}
-                    className={`w-full rounded-2xl px-4 py-3 font-semibold transition-colors ${isActive ? "bg-emerald-600 text-white" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
-                  >
-                    {isActive ? "Session Running" : "Start Session"}
-                  </button>
-                </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={goToPreviousTutorialStep}
+                  disabled={tutorialStepIndex === 0}
+                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                    tutorialStepIndex === 0
+                      ? "cursor-not-allowed opacity-40"
+                      : isDarkTheme
+                        ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={goToNextTutorialStep}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${primaryButtonClass}`}
+                >
+                  {tutorialStepIndex === TUTORIAL_STEPS.length - 1
+                    ? "Finish"
+                    : "Next"}
+                </button>
               </div>
             </div>
           </div>
@@ -2764,6 +3554,7 @@ export default function App() {
 }
 
 function MetricCard({
+  paused,
   theme,
   label,
   value,
@@ -2776,6 +3567,7 @@ function MetricCard({
   progress: _progress,
   colorClass,
 }: {
+  paused: boolean;
   theme: ThemeMode;
   label: string;
   value: string;
@@ -2799,29 +3591,55 @@ function MetricCard({
     <div
       className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${
         isDarkTheme
-          ? "bg-gradient-to-br from-white/10 to-transparent border-white/10 hover:bg-white/10"
-          : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white"
+          ? paused
+            ? "bg-gradient-to-br from-white/10 to-transparent border-white/10"
+            : "bg-gradient-to-br from-white/10 via-white/[0.045] to-transparent border-white/10 hover:bg-white/10"
+          : paused
+            ? "bg-gradient-to-br from-white to-slate-50 border-slate-200"
+            : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white"
       }`}
     >
       <div
         className={`flex items-center justify-between mb-1 z-10 ${
-          isDarkTheme ? "text-white/50" : "text-slate-500"
+          paused
+            ? isDarkTheme
+              ? "text-white/35"
+              : "text-slate-400"
+            : isDarkTheme
+              ? "text-white/50"
+              : "text-slate-500"
         }`}
       >
         <span className="text-xs font-medium uppercase tracking-wider">
           {label}
         </span>
-        <Icon size={14} />
+        <div className="flex items-center gap-2">
+          <Icon size={14} />
+        </div>
       </div>
-      <div className="flex items-baseline gap-1 z-10">
+      <div className="flex items-baseline gap-1 z-10 mt-0.5">
         <span
           className={`text-2xl font-bold tracking-tight ${
-            colorClass || (isDarkTheme ? "text-white" : "text-slate-900")
+            paused
+              ? isDarkTheme
+                ? "text-white/55"
+                : "text-slate-500"
+              : colorClass || (isDarkTheme ? "text-white" : "text-slate-900")
           }`}
         >
           {value}
         </span>
-        <span className={`text-xs ${isDarkTheme ? "text-white/40" : "text-slate-500"}`}>
+        <span
+          className={`text-xs ${
+            paused
+              ? isDarkTheme
+                ? "text-white/28"
+                : "text-slate-400"
+              : isDarkTheme
+                ? "text-white/40"
+                : "text-slate-500"
+          }`}
+        >
           {unit}
         </span>
       </div>
@@ -2830,156 +3648,388 @@ function MetricCard({
 }
 
 function FloatingStatusPanel({
-  theme,
+  compact,
   isActive,
   pill,
   score,
   feedback,
 }: {
-  theme: ThemeMode;
+  compact: boolean;
   isActive: boolean;
   pill: Pill;
   score: number;
   feedback: string;
 }) {
-  const isDarkTheme = theme === "dark";
-  const scoreColor =
-    score > 80 ? "text-emerald-400" : score > 60 ? "text-amber-400" : "text-rose-400";
-  const statusTone =
+  const boundedScore = clamp(score, 0, 100);
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (boundedScore / 100) * circumference;
+
+  const scoreTone =
+    score > 80
+      ? {
+          from: "#34d399",
+          to: "#059669",
+          cardBorder: "#d1fae5",
+          cardGlow: "#ecfdf5",
+          dot: "#10b981",
+          title: "Looking good!",
+        }
+      : score > 60
+        ? {
+            from: "#fbbf24",
+            to: "#d97706",
+            cardBorder: "#fef3c7",
+            cardGlow: "#fffbeb",
+            dot: "#f59e0b",
+            title: "Needs attention",
+          }
+        : {
+            from: "#fb7185",
+            to: "#e11d48",
+            cardBorder: "#ffe4e6",
+            cardGlow: "#fff1f2",
+            dot: "#f43f5e",
+            title: "Adjust posture",
+          };
+
+  const feedbackTitle =
     pill === "good"
-      ? "bg-emerald-500/18 text-emerald-300 ring-emerald-400/30"
+      ? "Looking good!"
       : pill === "fix"
-        ? "bg-amber-500/18 text-amber-300 ring-amber-400/30"
+        ? "Needs attention"
         : pill === "error"
-          ? "bg-rose-500/18 text-rose-300 ring-rose-400/30"
-          : isDarkTheme
-            ? "bg-white/12 text-white/80 ring-white/15"
-            : "bg-slate-900/10 text-slate-700 ring-slate-900/10";
-  const statusLabel =
-    pill === "good"
-      ? "Aligned"
-      : pill === "fix"
-        ? "Adjust"
-        : pill === "loading"
-          ? "Loading"
-          : pill === "error"
-            ? "Error"
-            : "Standby";
-  const statusMessage = isActive
+          ? "Camera issue"
+          : isActive
+            ? scoreTone.title
+            : "Ready to monitor";
+
+  const feedbackMessage = isActive
     ? feedback
-    : "Start a session to keep a compact posture check on top.";
-  const StatusIcon =
-    pill === "good"
-      ? CheckCircle2
-      : pill === "fix" || pill === "error"
-        ? AlertCircle
-        : Camera;
+    : "Start a session to begin posture feedback.";
+
+  if (compact) {
+    return (
+      <div
+        style={{
+          alignItems: "center",
+          background:
+            "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.94))",
+          boxSizing: "border-box",
+          color: "#111827",
+          display: "flex",
+          fontFamily:
+            'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          height: "100dvh",
+          justifyContent: "center",
+          overflow: "hidden",
+          padding: 18,
+          width: "100dvw",
+        }}
+      >
+        <div
+          style={{
+            alignItems: "center",
+            background: "#ffffff",
+            border: "1px solid rgba(226, 232, 240, 0.95)",
+            borderRadius: 22,
+            boxShadow: "0 20px 40px -28px rgba(15, 23, 42, 0.35)",
+            boxSizing: "border-box",
+            display: "flex",
+            gap: 14,
+            minHeight: 0,
+            padding: "16px 18px",
+            width: "100%",
+          }}
+        >
+          <span
+            style={{
+              background: isActive ? scoreTone.dot : "#cbd5e1",
+              borderRadius: 999,
+              display: "block",
+              flexShrink: 0,
+              height: 10,
+              width: 10,
+            }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                color: "#0f172a",
+                fontSize: 14,
+                fontWeight: 800,
+                letterSpacing: "-0.01em",
+                lineHeight: 1.2,
+              }}
+            >
+              SukatLikod is active
+            </div>
+            <div
+              style={{
+                color: "#64748b",
+                fontSize: 12.5,
+                fontWeight: 600,
+                lineHeight: 1.4,
+                marginTop: 3,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Return here when the browser is in the background.
+            </div>
+          </div>
+          <div
+            style={{
+              color: "#0f172a",
+              flexShrink: 0,
+              fontSize: 28,
+              fontWeight: 900,
+              letterSpacing: "-0.05em",
+              lineHeight: 1,
+              marginLeft: "auto",
+            }}
+          >
+            {boundedScore}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
-      className="min-h-screen p-2 text-white"
-      style={{ background: "transparent" }}
+      style={{
+        alignItems: "center",
+        background: "#ffffff",
+        boxSizing: "border-box",
+        color: "#111827",
+        display: "flex",
+        fontFamily:
+          'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        height: "100dvh",
+        justifyContent: "center",
+        overflow: "hidden",
+        padding: 0,
+        width: "100dvw",
+      }}
     >
       <div
-        className={`relative isolate h-full overflow-hidden rounded-[1.45rem] border shadow-2xl ${
-          isDarkTheme
-            ? "border-white/12 bg-slate-950/70 text-white"
-            : "border-white/50 bg-slate-100/78 text-slate-900"
-        }`}
+        style={{
+          background: "#ffffff",
+          border: 0,
+          borderRadius: 0,
+          boxShadow: "none",
+          boxSizing: "border-box",
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          maxWidth: "none",
+          overflow: "hidden",
+          width: "100%",
+        }}
       >
         <div
-          className={`absolute inset-0 ${
-            isDarkTheme
-              ? "bg-[radial-gradient(circle_at_top_left,_rgba(96,165,250,0.28),_transparent_38%),radial-gradient(circle_at_top_right,_rgba(15,23,42,0.22),_transparent_34%),linear-gradient(180deg,_rgba(15,23,42,0.18)_0%,_rgba(2,6,23,0.32)_48%,_rgba(2,6,23,0.88)_100%)]"
-              : "bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(255,255,255,0.55),_transparent_30%),linear-gradient(180deg,_rgba(255,255,255,0.16)_0%,_rgba(226,232,240,0.28)_48%,_rgba(226,232,240,0.92)_100%)]"
-          }`}
-        />
+          style={{
+            alignItems: "center",
+            display: "flex",
+            justifyContent: "space-between",
+            padding: "28px 28px 24px",
+          }}
+        >
+          <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
+            <span
+              style={{
+                background: isActive ? scoreTone.dot : "#cbd5e1",
+                borderRadius: 999,
+                display: "block",
+                height: 7,
+                width: 7,
+              }}
+            />
+            <span
+              style={{
+                color: "#334155",
+                fontSize: 15,
+                fontWeight: 700,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Posture Monitor
+            </span>
+          </div>
+        </div>
+
         <div
-          className={`absolute inset-[10px] rounded-[1.15rem] ${
-            isDarkTheme
-              ? "border border-white/8 bg-white/[0.03]"
-              : "border border-white/60 bg-white/20"
-          }`}
-        />
+          style={{
+            alignItems: "center",
+            boxSizing: "border-box",
+            display: "flex",
+            flex: 1,
+            flexDirection: "column",
+            minHeight: 0,
+            overflow: "hidden",
+            padding: "10px 32px 32px",
+          }}
+        >
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flexShrink: 0,
+              justifyContent: "center",
+              position: "relative",
+            }}
+          >
+            <svg
+              style={{
+                height: "min(44vmin, 188px)",
+                transform: "rotate(-90deg)",
+                width: "min(44vmin, 188px)",
+              }}
+              viewBox="0 0 120 120"
+              aria-hidden="true"
+            >
+              <defs>
+                <linearGradient
+                  id="score-gradient"
+                  x1="0%"
+                  y1="0%"
+                  x2="100%"
+                  y2="100%"
+                >
+                  <stop offset="0%" stopColor={scoreTone.from} />
+                  <stop offset="100%" stopColor={scoreTone.to} />
+                </linearGradient>
+              </defs>
+              <circle
+                cx="60"
+                cy="60"
+                r={radius}
+                stroke="#f1f5f9"
+                strokeWidth="10"
+                fill="none"
+              />
+              <circle
+                cx="60"
+                cy="60"
+                r={radius}
+                stroke="url(#score-gradient)"
+                className="transition-all duration-1000 ease-out"
+                strokeWidth="10"
+                fill="none"
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={strokeDashoffset}
+              />
+            </svg>
 
-        <div className="relative flex h-full flex-col justify-between p-3.5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <div
-                className={`flex h-9 w-9 items-center justify-center rounded-full border ${
-                  isDarkTheme
-                    ? "border-white/12 bg-black/20 text-white/90"
-                    : "border-white/70 bg-white/65 text-slate-700"
-                }`}
+            <div
+              style={{
+                alignItems: "center",
+                bottom: 0,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                left: 0,
+                position: "absolute",
+                right: 0,
+                top: 0,
+              }}
+            >
+              <span
+                style={{
+                  color: "#1e293b",
+                  fontSize: "min(13vmin, 60px)",
+                  fontWeight: 800,
+                  letterSpacing: "-0.06em",
+                  lineHeight: 1,
+                  marginBottom: 8,
+                }}
               >
-                <StatusIcon size={18} />
-              </div>
-              <div>
-                <div
-                  className={`text-[10px] font-bold uppercase tracking-[0.22em] ${
-                    isDarkTheme ? "text-white/55" : "text-slate-700/65"
-                  }`}
-                >
-                  Uprightly
-                </div>
-                <div className="text-sm font-semibold leading-tight">
-                  {isActive ? "Live posture check" : "Floating preview"}
-                </div>
-              </div>
-            </div>
-            <div
-              className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ring-1 ${statusTone}`}
-            >
-              {statusLabel}
+                {boundedScore}
+              </span>
+              <span
+                style={{
+                  color: "#94a3b8",
+                  fontSize: 14,
+                  fontWeight: 800,
+                  letterSpacing: "0.2em",
+                  textTransform: "uppercase",
+                }}
+              >
+                Score
+              </span>
             </div>
           </div>
 
           <div
-            className={`mx-auto flex h-full w-full max-w-[12rem] flex-1 items-center justify-center`}
+            style={{
+              background: "rgba(236, 253, 245, 0.42)",
+              border: `1px solid ${scoreTone.cardBorder}`,
+              borderRadius: 20,
+              boxShadow: "0 16px 34px -24px rgba(15, 23, 42, 0.28)",
+              boxSizing: "border-box",
+              display: "flex",
+              gap: 20,
+              marginTop: "auto",
+              overflow: "hidden",
+              padding: 20,
+              position: "relative",
+              width: "100%",
+            }}
           >
             <div
-              className={`flex h-24 w-24 items-center justify-center rounded-full border shadow-lg ${
-                isDarkTheme
-                  ? "border-white/10 bg-black/25"
-                  : "border-white/80 bg-white/55"
-              }`}
-            >
-              <div className={`text-4xl font-black leading-none ${scoreColor}`}>{score}</div>
-            </div>
-          </div>
+              style={{
+                background: scoreTone.cardGlow,
+                borderRadius: 999,
+                filter: "blur(28px)",
+                height: 96,
+                position: "absolute",
+                right: -32,
+                top: -32,
+                width: 96,
+              }}
+            />
 
-          <div
-            className={`rounded-[1.1rem] border p-3 backdrop-blur-md ${
-              isDarkTheme
-                ? "border-white/10 bg-black/35"
-                : "border-white/70 bg-white/58"
-            }`}
-          >
-            <div className="flex items-end justify-between gap-3">
-              <div className="min-w-0">
-                <div
-                  className={`text-[10px] font-bold uppercase tracking-[0.18em] ${
-                    isDarkTheme ? "text-white/50" : "text-slate-700/60"
-                  }`}
-                >
-                  Posture Score
-                </div>
-                <div className="mt-1 truncate text-base font-semibold">
-                  {statusLabel === "Aligned"
-                    ? "Looking balanced"
-                    : statusLabel === "Adjust"
-                      ? "Needs correction"
-                      : statusLabel}
-                </div>
+            <div style={{ flexShrink: 0, marginTop: 4, position: "relative", zIndex: 1 }}>
+              <div
+                style={{
+                  alignItems: "center",
+                  backgroundImage: `linear-gradient(135deg, ${scoreTone.from}, ${scoreTone.to})`,
+                  borderRadius: 14,
+                  color: "#ffffff",
+                  display: "flex",
+                  justifyContent: "center",
+                  padding: 12,
+                }}
+              >
+                <ShieldCheck size={20} />
               </div>
-              <div className={`text-2xl font-black leading-none ${scoreColor}`}>{score}</div>
             </div>
-            <div
-              className={`mt-2 max-h-10 overflow-hidden text-[12px] leading-5 ${
-                isDarkTheme ? "text-white/80" : "text-slate-700"
-              }`}
-            >
-              {statusMessage}
+            <div style={{ minWidth: 0, position: "relative", zIndex: 1 }}>
+              <h3
+                style={{
+                  color: "#1e293b",
+                  fontSize: 18,
+                  fontWeight: 800,
+                  lineHeight: 1.2,
+                  margin: "0 0 8px",
+                }}
+              >
+                {feedbackTitle}
+              </h3>
+              <p
+                style={{
+                  color: "#64748b",
+                  fontSize: 15.5,
+                  fontWeight: 650,
+                  lineHeight: 1.55,
+                  margin: 0,
+                  maxHeight: 80,
+                  overflow: "hidden",
+                }}
+              >
+                {feedbackMessage}
+              </p>
             </div>
           </div>
         </div>
