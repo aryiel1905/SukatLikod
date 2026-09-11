@@ -3153,6 +3153,12 @@ export default function App() {
                           ? "h-[min(42dvh,22rem)]"
                           : "h-[min(60dvh,32rem)]"
                       }`
+                    : showSettings
+                      ? `pointer-events-none fixed inset-x-3 bottom-3 opacity-0 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[23rem] xl:w-96 ${
+                          isSessionLogIdle
+                            ? "h-[min(42dvh,22rem)]"
+                            : "h-[min(60dvh,32rem)]"
+                        }`
                     : "pointer-events-none absolute right-0 top-0 h-16 w-16 lg:bottom-0 lg:h-auto"
                 }`}
               >
@@ -3174,13 +3180,17 @@ export default function App() {
                       }}
                     />
                     <div className="pointer-events-none absolute left-4 right-4 top-4 z-10">
-                      <div className="pointer-events-auto flex w-full items-center justify-between gap-2">
+                      <div
+                        className={`pointer-events-auto flex w-full items-center rounded-xl border p-1 ${
+                          isDarkTheme
+                            ? "border-white/10 bg-black/25"
+                            : "border-stone-200 bg-white/75"
+                        }`}
+                        role="group"
+                        aria-label="Panel controls"
+                      >
                         <div
-                          className={`flex min-w-0 items-center gap-1 rounded-xl border p-1 ${
-                            isDarkTheme
-                              ? "border-white/10 bg-black/25"
-                              : "border-stone-200 bg-white/75"
-                          }`}
+                          className="flex min-w-0 flex-1 items-center gap-1"
                           role="tablist"
                           aria-label="Utility panel"
                         >
@@ -3211,9 +3221,15 @@ export default function App() {
                             Settings
                           </button>
                         </div>
+                        <span
+                          className={`mx-1 h-7 w-px shrink-0 ${
+                            isDarkTheme ? "bg-white/10" : "bg-stone-200"
+                          }`}
+                          aria-hidden="true"
+                        />
                         <button
                           onClick={() => setShowSessionLog(false)}
-                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-colors ${sessionLogIconButtonClass}`}
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border-0 transition-colors ${sessionLogIconButtonClass}`}
                           title="Close utility panel"
                           aria-label="Close utility panel"
                         >
@@ -3435,61 +3451,75 @@ export default function App() {
               className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${
                 showSettings
                   ? "fixed inset-x-3 bottom-3 z-50 h-[min(72dvh,42rem)] w-auto opacity-100 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[23rem] xl:w-96"
-                  : "hidden w-0 opacity-0 lg:block"
+                  : showSessionLog
+                    ? "pointer-events-none fixed inset-x-3 bottom-3 z-50 h-[min(72dvh,42rem)] w-auto opacity-0 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[23rem] xl:w-96"
+                    : "hidden w-0 opacity-0 lg:block"
               }`}
               inert={!showSettings}
-              style={!showSettings ? { display: "none" } : undefined}
+              style={!showSettings && !showSessionLog ? { display: "none" } : undefined}
             >
               <div
                 aria-hidden={!showSettings}
                 data-tour="settings-panel"
-                className={`settings-panel-shell ${isDarkTheme ? "settings-panel-dark" : "settings-panel-light"} pointer-events-auto flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border shadow-2xl transition-transform duration-200 ease-in-out motion-reduce:transition-none lg:w-[23rem] xl:w-96 ${showSettings ? "translate-x-0" : "translate-x-3"} ${settingsPanelClass}`}
+                className={`settings-panel-shell ${isDarkTheme ? "settings-panel-dark" : "settings-panel-light"} pointer-events-auto flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border shadow-2xl lg:w-[23rem] xl:w-96 ${settingsPanelClass}`}
               >
-                <div className="flex flex-shrink-0 items-center justify-between gap-2 px-5 pb-4 pt-5">
+                <div className="flex flex-shrink-0 items-center px-5 pb-4 pt-5">
                   <div
-                    className={`flex min-w-0 items-center gap-1 rounded-xl border p-1 ${
+                    className={`flex w-full min-w-0 items-center rounded-xl border p-1 ${
                       isDarkTheme
                         ? "border-white/10 bg-black/25"
                         : "border-stone-200 bg-white/75"
                     }`}
-                    role="tablist"
-                    aria-label="Utility panel"
+                    role="group"
+                    aria-label="Panel controls"
                   >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected="false"
-                      onClick={() => {
-                        setShowSettings(false);
-                        setShowSessionLog(true);
-                      }}
-                      className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
-                        isDarkTheme
-                          ? "text-white/65 hover:bg-white/10 hover:text-white"
-                          : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                    <div
+                      className="flex min-w-0 flex-1 items-center gap-1"
+                      role="tablist"
+                      aria-label="Utility panel"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        onClick={() => {
+                          setShowSettings(false);
+                          setShowSessionLog(true);
+                        }}
+                        className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
+                          isDarkTheme
+                            ? "text-white/65 hover:bg-white/10 hover:text-white"
+                            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                        }`}
+                      >
+                        <Bell size={16} aria-hidden="true" />
+                        Activity
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected="true"
+                        className="flex min-h-11 items-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                      >
+                        <Settings size={16} aria-hidden="true" />
+                        Settings
+                      </button>
+                    </div>
+                    <span
+                      className={`mx-1 h-7 w-px shrink-0 ${
+                        isDarkTheme ? "bg-white/10" : "bg-stone-200"
                       }`}
-                    >
-                      <Bell size={16} aria-hidden="true" />
-                      Activity
-                    </button>
+                      aria-hidden="true"
+                    />
                     <button
-                      type="button"
-                      role="tab"
-                      aria-selected="true"
-                      className="flex min-h-11 items-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                      onClick={() => setShowSettings(false)}
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border-0 transition-colors ${sessionLogIconButtonClass}`}
+                      title="Close utility panel"
+                      aria-label="Close utility panel"
                     >
-                      <Settings size={16} aria-hidden="true" />
-                      Settings
+                      <X size={20} aria-hidden="true" />
                     </button>
                   </div>
-                  <button
-                    onClick={() => setShowSettings(false)}
-                    className={`flex h-11 w-11 items-center justify-center rounded-xl border transition-colors ${isDarkTheme ? "border-white/10 text-white/70 hover:bg-white/10 hover:text-white" : "border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-900"}`}
-                    title="Close utility panel"
-                    aria-label="Close utility panel"
-                  >
-                    <X size={20} />
-                  </button>
                 </div>
 
                 <div className="settings-scroll-frame relative min-h-0 flex-1">

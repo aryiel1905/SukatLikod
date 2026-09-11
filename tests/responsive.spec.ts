@@ -121,6 +121,12 @@ test("activity and settings use one mutually exclusive utility panel", async ({
   );
   await expect(settingsTab.locator(".lucide-settings")).toBeVisible();
   await expect(page.getByRole("tablist", { name: "Utility panel" })).toHaveCount(1);
+  const panelControls = page.getByRole("group", { name: "Panel controls" });
+  await expect(panelControls).toBeVisible();
+  await expect(panelControls.getByRole("tab")).toHaveCount(2);
+  await expect(
+    panelControls.getByRole("button", { name: "Close utility panel" }),
+  ).toBeVisible();
 
   const [settingsBox, cameraBoxAfter] = await Promise.all([
     settingsPanel.boundingBox(),
@@ -131,6 +137,14 @@ test("activity and settings use one mutually exclusive utility panel", async ({
     Math.abs((settingsBox?.width ?? 0) - (activityBox?.width ?? 0)),
   ).toBeLessThanOrEqual(1);
   expect(cameraBoxAfter?.width).toBeCloseTo(cameraBoxBefore?.width ?? 0, 0);
+
+  await page.getByRole("tab", { name: "Activity" }).click();
+  await expect(activityPanel).toBeVisible();
+  const returnedActivityBox = await activityPanel.boundingBox();
+  expect(returnedActivityBox?.width ?? 0).toBeGreaterThan(360);
+  expect(
+    Math.abs((returnedActivityBox?.x ?? 0) - (settingsBox?.x ?? 0)),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("desktop brand title stays fully inside the rail", async ({ page }) => {
