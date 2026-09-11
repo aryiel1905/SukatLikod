@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -7,11 +7,12 @@
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+import { useGSAP } from "@gsap/react";
+import { gsap } from "gsap";
 import {
   Camera,
   VideoOff,
   Settings,
-  Settings2,
   Activity,
   AlertCircle,
   CheckCircle2,
@@ -19,7 +20,6 @@ import {
   Maximize2,
   Bell,
   X,
-  PanelRightClose,
   PanelRightOpen,
   Moon,
   Sun,
@@ -43,6 +43,8 @@ import {
   variance,
 } from "./features/posture/math";
 import "./features/settings/settings-scroll.css";
+
+gsap.registerPlugin(useGSAP);
 
 const IDX = {
   NOSE: 0,
@@ -220,28 +222,28 @@ const DEFAULT_DEBUG_METRICS: DebugMetrics = {
 const TUTORIAL_STEPS: TutorialStep[] = [
   {
     target: "start-session",
-    title: "Start or stop monitoring",
-    body: "Use this control to open the camera and begin live posture checks. Press it again when you want to stop the session.",
+    title: "Begin when you're ready",
+    body: "Start Session opens your camera and begins live posture guidance. The same control ends the session whenever you need a break.",
   },
   {
     target: "camera-stage",
-    title: "Stay inside the camera frame",
-    body: "This is where the camera feed and pose guide appear. Keep your head and shoulders visible so the app can track your posture reliably.",
+    title: "Frame your upper body",
+    body: "Keep your head and shoulders visible inside the guide. A steady, front-facing view gives Uprightly the clearest posture signal.",
   },
   {
     target: "posture-score",
-    title: "Read your posture score",
-    body: "The score gives a quick posture summary. The metric cards underneath show which part needs attention, such as head offset or shoulder level.",
+    title: "Read the overall signal",
+    body: "The score summarizes your current posture. The supporting measurements show whether your head, trunk, or shoulders need attention.",
   },
   {
     target: "session-log",
-    title: "Follow the live feedback",
-    body: "The session log records posture feedback while monitoring is active, so you can review what changed during the session.",
+    title: "Notice patterns, not moments",
+    body: "The session log collects meaningful posture changes so you can follow the pattern without reacting to every small movement.",
   },
   {
     target: "settings-panel",
-    title: "Adjust the session setup",
-    body: "Settings control the camera source, theme, voice feedback, tutorial replay, and floating status window.",
+    title: "Tune the experience",
+    body: "Choose your camera and theme, manage voice feedback, replay this tour, or keep status visible in a floating window.",
   },
 ];
 
@@ -252,7 +254,7 @@ function pushLimited(arr: number[], x: number) {
   if (arr.length > WINDOW) arr.shift();
 }
 
-function findVisibleTourTarget(target: TutorialTarget): TutorialRect | null {
+function findVisibleTourElement(target: TutorialTarget): HTMLElement | null {
   if (typeof document === "undefined") return null;
 
   const elements = Array.from(
@@ -270,18 +272,26 @@ function findVisibleTourTarget(target: TutorialTarget): TutorialRect | null {
       style.opacity !== "0";
 
     if (isVisible) {
-      return {
-        top: rect.top,
-        left: rect.left,
-        right: rect.right,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-      };
+      return element;
     }
   }
 
   return null;
+}
+
+function findVisibleTourTarget(target: TutorialTarget): TutorialRect | null {
+  const element = findVisibleTourElement(target);
+  if (!element) return null;
+
+  const rect = element.getBoundingClientRect();
+  return {
+    top: rect.top,
+    left: rect.left,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 function vsub(a: Point3, b: Point3) {
@@ -553,8 +563,8 @@ function getFeedbackPresentation(
 ): FeedbackPresentation {
   let type: FeedbackType = "info";
   let title = "Looking Good";
-  let color = "text-cyan-400";
-  let bg = "bg-cyan-500/10 border-cyan-500/20";
+  let color = "text-[#91a889]";
+  let bg = "bg-[#91a889]/10 border-[#91a889]/25";
   let text = msg;
   let audio = "That looks good. Keep it there.";
   const lower = msg.toLowerCase();
@@ -591,8 +601,8 @@ function getFeedbackPresentation(
   } else if (scoreValue > 85) {
     type = "success";
     title = "Good Posture";
-    color = "text-emerald-400";
-    bg = "bg-emerald-500/10 border-emerald-500/20";
+    color = "text-[#91a889]";
+    bg = "bg-[#91a889]/10 border-[#91a889]/25";
     text = "Nice posture. Keep it steady.";
     audio = "That looks good. Keep it there.";
   }
@@ -604,6 +614,14 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const sessionLogStackRef = useRef<HTMLDivElement | null>(null);
+  const tutorialCardRef = useRef<HTMLDivElement | null>(null);
+  const tutorialContentRef = useRef<HTMLDivElement | null>(null);
+  const tutorialReturnFocusRef = useRef<HTMLElement | null>(null);
+  const tutorialPanelStateRef = useRef({
+    showSettings: false,
+    showSessionLog: false,
+  });
 
   const poseRef = useRef<PoseLandmarker | null>(null);
   const faceRef = useRef<FaceLandmarker | null>(null);
@@ -685,6 +703,11 @@ export default function App() {
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [tutorialTargetRect, setTutorialTargetRect] =
     useState<TutorialRect | null>(null);
+  const [tutorialCardSize, setTutorialCardSize] = useState({
+    width: 384,
+    height: 320,
+  });
+  const [isCompactTutorial, setIsCompactTutorial] = useState(false);
   const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(false);
   const [floatingWindowReady, setFloatingWindowReady] = useState(false);
   const [autoPipStatus, setAutoPipStatus] =
@@ -2092,7 +2115,7 @@ export default function App() {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     }
     document.documentElement.style.colorScheme = theme;
-    document.body.style.background = theme === "dark" ? "#0a0a0c" : "#eef2f7";
+    document.body.style.background = theme === "dark" ? "#10100f" : "#f2efe7";
     if (floatingWindowRef.current?.document?.body) {
       floatingWindowRef.current.document.body.style.background = "transparent";
     }
@@ -2376,7 +2399,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || e.repeat) return;
+      if (showTutorial || e.code !== "Space" || e.repeat) return;
 
       const target = e.target as HTMLElement | null;
       if (
@@ -2397,21 +2420,79 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isActive, pill, start, stop]);
+  }, [isActive, pill, showTutorial, start, stop]);
 
   const currentTutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
+
+  const closeTutorial = useCallback(() => {
+    window.localStorage.setItem(TUTORIAL_SEEN_STORAGE_KEY, "true");
+    setShowTutorial(false);
+    setShowSettings(tutorialPanelStateRef.current.showSettings);
+    setShowSessionLog(tutorialPanelStateRef.current.showSessionLog);
+  }, []);
+
+  const openTutorial = useCallback(() => {
+    tutorialPanelStateRef.current = { showSettings, showSessionLog };
+    tutorialReturnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setTutorialStepIndex(0);
+    setShowTutorial(true);
+  }, [showSessionLog, showSettings]);
+
+  const goToNextTutorialStep = useCallback(() => {
+    if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
+      closeTutorial();
+      return;
+    }
+    setTutorialStepIndex((index) => index + 1);
+  }, [closeTutorial, tutorialStepIndex]);
+
+  const goToPreviousTutorialStep = useCallback(() => {
+    setTutorialStepIndex((index) => Math.max(index - 1, 0));
+  }, []);
 
   useEffect(() => {
     if (!showTutorial) return;
 
     if (currentTutorialStep.target === "settings-panel") {
       setShowSettings(true);
-    }
-
-    if (currentTutorialStep.target === "session-log") {
+      setShowSessionLog(false);
+    } else if (currentTutorialStep.target === "session-log") {
+      setShowSettings(false);
       setShowSessionLog(true);
+    } else {
+      setShowSettings(false);
+      setShowSessionLog(false);
     }
   }, [currentTutorialStep.target, showTutorial]);
+
+  useEffect(() => {
+    if (!showTutorial) return;
+
+    const mediaQuery = window.matchMedia(
+      "(max-width: 639px), (max-height: 680px)",
+    );
+    const updateViewportMode = () => setIsCompactTutorial(mediaQuery.matches);
+    updateViewportMode();
+    mediaQuery.addEventListener("change", updateViewportMode);
+    return () => mediaQuery.removeEventListener("change", updateViewportMode);
+  }, [showTutorial]);
+
+  useEffect(() => {
+    if (!showTutorial || !tutorialCardRef.current) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      setTutorialCardSize({
+        width: entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width,
+        height: entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height,
+      });
+    });
+    observer.observe(tutorialCardRef.current);
+    return () => observer.disconnect();
+  }, [showTutorial, tutorialStepIndex]);
 
   useEffect(() => {
     if (!showTutorial) {
@@ -2430,8 +2511,24 @@ export default function App() {
       });
     };
 
+    const targetElement = findVisibleTourElement(currentTutorialStep.target);
+    if (targetElement) {
+      const targetRect = targetElement.getBoundingClientRect();
+      const isOutsideViewport =
+        targetRect.top < 12 || targetRect.bottom > window.innerHeight - 12;
+      if (isOutsideViewport) {
+        targetElement.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "nearest",
+          inline: "nearest",
+        });
+      }
+    }
+
     measure();
-    const deferredMeasure = window.setTimeout(measure, 230);
+    const deferredMeasure = window.setTimeout(measure, 280);
 
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
@@ -2444,45 +2541,160 @@ export default function App() {
     };
   }, [currentTutorialStep.target, showSettings, showSessionLog, showTutorial]);
 
-  const closeTutorial = () => {
-    window.localStorage.setItem(TUTORIAL_SEEN_STORAGE_KEY, "true");
-    setShowTutorial(false);
-  };
-
-  const openTutorial = () => {
-    setTutorialStepIndex(0);
-    setShowTutorial(true);
-  };
-
   useEffect(() => {
-    const closeTransientPanels = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (showTutorial) closeTutorial();
-      else if (showSettings) setShowSettings(false);
-      else if (showSessionLog) setShowSessionLog(false);
-    };
+    if (!showTutorial) return;
 
-    window.addEventListener("keydown", closeTransientPanels);
-    return () => window.removeEventListener("keydown", closeTransientPanels);
-  }, [showSessionLog, showSettings, showTutorial]);
-
-  const goToNextTutorialStep = () => {
-    if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
-      closeTutorial();
-      return;
+    if (!tutorialReturnFocusRef.current) {
+      tutorialReturnFocusRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
     }
 
-    setTutorialStepIndex((index) =>
-      Math.min(index + 1, TUTORIAL_STEPS.length - 1),
-    );
-  };
+    const focusFrame = window.requestAnimationFrame(() => {
+      tutorialCardRef.current
+        ?.querySelector<HTMLElement>("[data-tutorial-primary]")
+        ?.focus();
+    });
 
-  const goToPreviousTutorialStep = () => {
-    setTutorialStepIndex((index) => Math.max(index - 1, 0));
-  };
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      const returnTarget = tutorialReturnFocusRef.current;
+      tutorialReturnFocusRef.current = null;
+      window.requestAnimationFrame(() => returnTarget?.focus());
+    };
+  }, [showTutorial]);
+
+  useEffect(() => {
+    const onTransientKeyDown = (event: KeyboardEvent) => {
+      if (!showTutorial) {
+        if (event.key !== "Escape") return;
+        if (showSettings) setShowSettings(false);
+        else if (showSessionLog) setShowSessionLog(false);
+        return;
+      }
+
+      if (event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        target?.matches("input, textarea, select, [contenteditable='true']") ??
+        false;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTutorial();
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const focusable = Array.from(
+          tutorialCardRef.current?.querySelectorAll<HTMLElement>(
+            "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+          ) ?? [],
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+
+      if (isEditable) return;
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goToPreviousTutorialStep();
+        return;
+      }
+
+      const isSpace = event.code === "Space" || event.key === " ";
+      if (isSpace && target?.closest("button, a, [role='button']")) return;
+
+      if (event.key === "ArrowRight" || isSpace) {
+        event.preventDefault();
+        goToNextTutorialStep();
+      }
+    };
+
+    window.addEventListener("keydown", onTransientKeyDown);
+    return () => window.removeEventListener("keydown", onTransientKeyDown);
+  }, [
+    closeTutorial,
+    goToNextTutorialStep,
+    goToPreviousTutorialStep,
+    showSessionLog,
+    showSettings,
+    showTutorial,
+  ]);
+
+  useGSAP(
+    () => {
+      if (
+        !showTutorial ||
+        !tutorialContentRef.current ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        return;
+      }
+
+      gsap.fromTo(
+        tutorialContentRef.current.querySelectorAll("[data-tutorial-reveal]"),
+        { autoAlpha: 0, y: 10 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.36,
+          stagger: 0.055,
+          ease: "power2.out",
+        },
+      );
+    },
+    {
+      dependencies: [showTutorial, tutorialStepIndex],
+      scope: tutorialCardRef,
+    },
+  );
+
+  useGSAP(
+    () => {
+      if (
+        !showSessionLog ||
+        feedbacks.length === 0 ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        return;
+      }
+
+      const newestCard = sessionLogStackRef.current?.querySelector(
+        "[data-feedback-card]",
+      );
+      if (!newestCard) return;
+      gsap.fromTo(
+        newestCard,
+        { autoAlpha: 0, y: 18, scale: 0.97 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.42,
+          ease: "power3.out",
+        },
+      );
+    },
+    {
+      dependencies: [feedbacks.length, showSessionLog],
+      scope: sessionLogStackRef,
+    },
+  );
 
   const getScoreColor = (s: number) => {
-    if (s > 80) return "text-emerald-400";
+    if (s > 80) return "text-[#91a889]";
     if (s > 60) return "text-amber-400";
     return "text-rose-400";
   };
@@ -2512,35 +2724,35 @@ export default function App() {
   const isLoading = pill === "loading";
   const isDarkTheme = theme === "dark";
   const shellClass = isDarkTheme
-    ? "bg-[#0a0a0c] text-slate-100"
-    : "bg-[#eef2f7] text-slate-900";
+    ? "uprightly-shell-dark bg-[#10100f] text-[#f4f0e8]"
+    : "uprightly-shell-light bg-[#f2efe7] text-[#1c1b19]";
   const heroCardClass = isDarkTheme
     ? "bg-gradient-to-br from-white/[0.08] to-transparent border-white/10 hover:bg-white/[0.08]"
-    : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white";
+    : "bg-gradient-to-br from-white to-stone-50 border-stone-200 hover:bg-white";
   const stageClass = isDarkTheme
-    ? "bg-[#08090c] border-white/5"
-    : "bg-white border-slate-200";
+    ? "bg-[#151412] border-white/8"
+    : "bg-[#fffdf8] border-[#ded8cc]";
   const stageGlassClass = isDarkTheme
     ? "bg-black/45 backdrop-blur-md border-white/10"
-    : "bg-white/88 backdrop-blur-md border-slate-200";
+    : "bg-white/88 backdrop-blur-md border-stone-200";
   const settingsPanelClass = isDarkTheme
-    ? "bg-black/30 backdrop-blur-md border-white/10"
-    : "bg-white/92 backdrop-blur-md border-slate-200";
-  const subtleTextClass = isDarkTheme ? "text-white/60" : "text-slate-500";
-  const mutedTextClass = isDarkTheme ? "text-white/60" : "text-slate-500";
-  const quietTextClass = isDarkTheme ? "text-white/70" : "text-slate-600";
+    ? "border-white/10 bg-[#171715]/95 backdrop-blur-2xl"
+    : "border-stone-200 bg-white/95 backdrop-blur-2xl";
+  const subtleTextClass = isDarkTheme ? "text-white/60" : "text-stone-500";
+  const mutedTextClass = isDarkTheme ? "text-white/60" : "text-stone-500";
+  const quietTextClass = isDarkTheme ? "text-white/70" : "text-stone-600";
   const iconButtonClass = isDarkTheme
     ? "border-white/30 bg-white/10 text-white/80 hover:bg-white hover:text-black"
-    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100";
+    : "border-stone-200 bg-white text-stone-700 hover:bg-stone-100";
   const sessionLogIconButtonClass = isDarkTheme
     ? "border-white/10 bg-black/30 text-white/80 hover:bg-black/45 hover:text-white"
-    : "border-slate-200 bg-white/75 text-slate-700 hover:bg-white hover:text-slate-900";
+    : "border-stone-200 bg-white/75 text-stone-700 hover:bg-white hover:text-stone-900";
   const primaryButtonClass = isDarkTheme
-    ? "bg-white text-black hover:bg-slate-200 shadow-lg"
-    : "bg-slate-900 text-white hover:bg-slate-700 shadow-lg";
-  const tutorialOverlayClass = isDarkTheme ? "bg-black/78" : "bg-slate-100/80";
+    ? "bg-[#d39a38] text-[#171612] hover:bg-[#e1ad52] shadow-lg"
+    : "bg-[#1c1b19] text-[#fffdf8] hover:bg-[#38352f] shadow-lg";
+  const tutorialOverlayClass = isDarkTheme ? "bg-[#10100f]/82" : "bg-[#f2efe7]/84";
   const themeVars: CSSProperties = {
-    color: isDarkTheme ? "#e5edf7" : "#0f172a",
+    color: isDarkTheme ? "#f4f0e8" : "#1c1b19",
   };
   const floatingWindowSupported =
     typeof window !== "undefined" &&
@@ -2571,22 +2783,22 @@ export default function App() {
           : "ML unavailable";
   const mlStatusClass =
     mlStatus === "connected"
-      ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-300"
+      ? "border-[#91a889]/30 bg-[#91a889]/10 text-[#b6c8ae]"
       : mlStatus === "checking"
-        ? "border-sky-400/25 bg-sky-400/10 text-sky-300"
+        ? "border-[#d39a38]/30 bg-[#d39a38]/10 text-[#e8bd70]"
         : mlStatus === "degraded"
           ? "border-amber-400/25 bg-amber-400/10 text-amber-300"
           : "border-rose-400/25 bg-rose-400/10 text-rose-300";
   const autoPipStatusMessage =
     autoPipStatus === "supported"
-      ? "This browser can auto-open the floating window during an active session when the tab or window moves out of focus."
+      ? "Opens automatically when an active session moves out of focus."
       : autoPipStatus === "manual_only"
-        ? "Manual floating window works here, but this browser context does not expose the full automatic PiP hooks."
+        ? "Available manually; automatic opening is limited in this browser."
         : autoPipStatus === "blocked"
-          ? "The floating window works manually, but this browser appears to reject the automatic PiP action for this page."
-          : "This browser does not support the floating document window here. Chromium-based browsers on HTTPS support it best.";
+          ? "Available manually, but automatic opening is currently blocked."
+          : "Not supported here. Try a Chromium browser over HTTPS.";
   const tutorialCardWidth =
-    typeof window === "undefined" ? 360 : Math.min(360, window.innerWidth - 32);
+    typeof window === "undefined" ? 384 : Math.min(384, window.innerWidth - 24);
   const tutorialHighlightStyle: CSSProperties | undefined = tutorialTargetRect
     ? {
         top: tutorialTargetRect.top - 10,
@@ -2595,11 +2807,25 @@ export default function App() {
         height: tutorialTargetRect.height + 20,
       }
     : undefined;
-  const tutorialCardStyle: CSSProperties =
-    typeof window !== "undefined" && tutorialTargetRect
-      ? (() => {
+  const tutorialCardStyle: CSSProperties = (() => {
+    if (typeof window === "undefined") {
+      return { width: tutorialCardWidth, left: 16, top: 16 };
+    }
+
+    if (isCompactTutorial) {
+      return {
+        width: tutorialCardWidth,
+        left: Math.max(12, (window.innerWidth - tutorialCardWidth) / 2),
+        bottom: 12,
+        maxHeight: "calc(100dvh - 24px)",
+        overflowY: "auto",
+      };
+    }
+
+    if (tutorialTargetRect) {
+      return (() => {
           const gap = 18;
-          const cardHeight = 300;
+          const cardHeight = Math.max(280, tutorialCardSize.height);
           const viewportPadding = 16;
           const viewportWidth = window.innerWidth;
           const viewportHeight = window.innerHeight;
@@ -2653,24 +2879,21 @@ export default function App() {
             left,
             top,
           };
-        })()
-      : {
-          width: tutorialCardWidth,
-          left:
-            typeof window === "undefined"
-              ? 16
-              : Math.max(16, (window.innerWidth - tutorialCardWidth) / 2),
-          top:
-            typeof window === "undefined"
-              ? 16
-              : Math.max(16, window.innerHeight / 2 - 150),
-        };
+        })();
+    }
+
+    return {
+      width: tutorialCardWidth,
+      left: Math.max(16, (window.innerWidth - tutorialCardWidth) / 2),
+      top: Math.max(16, (window.innerHeight - tutorialCardSize.height) / 2),
+    };
+  })();
   const visibleFeedbacks = feedbacks.slice(-5).reverse();
   const isSessionLogIdle = !isActive && feedbacks.length === 0;
 
   return (
     <main
-      className={`min-h-dvh w-full max-w-full overflow-x-hidden px-3 py-3 font-sans transition-colors duration-300 sm:p-4 lg:flex lg:items-center lg:justify-center lg:p-8 ${shellClass}`}
+      className={`uprightly-shell min-h-dvh w-full max-w-full overflow-x-hidden px-3 py-3 font-sans transition-colors duration-300 sm:p-4 lg:flex lg:items-center lg:justify-center lg:p-8 ${shellClass}`}
       style={themeVars}
     >
       <div className="flex min-h-[calc(100dvh-1.5rem)] w-full flex-col gap-4 sm:min-h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-4rem)] lg:max-h-[56rem] lg:min-h-0 lg:gap-6">
@@ -2679,20 +2902,16 @@ export default function App() {
             data-testid="desktop-rail"
             className="uprightly-desktop-rail hidden h-full min-h-0 w-60 flex-shrink-0 flex-col gap-4 overflow-hidden lg:flex xl:w-64"
           >
-            <div className="items-center text-center flex flex-col gap-2">
+            <div className="relative z-10 flex w-full flex-col items-center gap-2 overflow-visible px-1 pt-1 text-center">
               <h1
-                className={`text-5xl font-bold tracking-tight bg-clip-text text-transparent ${
-                  isDarkTheme
-                    ? "bg-gradient-to-r from-white to-white/60"
-                    : "bg-gradient-to-r from-slate-900 to-slate-500"
+                className={`relative z-10 w-full overflow-visible whitespace-nowrap pb-1 text-[2.7rem] font-bold leading-[1.08] tracking-[-0.045em] xl:text-[2.85rem] ${
+                  isDarkTheme ? "text-[#f4f0e8]" : "text-[#1c1b19]"
                 }`}
               >
                 Uprightly
               </h1>
-              <p
-                className={`text-sm font-medium uppercase tracking-[0.2em] ${mutedTextClass}`}
-              >
-                AI Posture Assistant
+              <p className={`text-sm font-medium ${mutedTextClass}`}>
+                Calm, real-time posture guidance
               </p>
             </div>
 
@@ -2722,15 +2941,15 @@ export default function App() {
                 <div
                   className={`flex items-center justify-between mb-1 z-10 ${subtleTextClass}`}
                 >
-                  <span className="text-xs font-medium uppercase tracking-wider">
+                  <span className="text-xs font-medium tracking-wide">
                     Posture Score
                   </span>
                   {score > 70 ? (
-                    <CheckCircle2 size={14} className="text-emerald-400" />
+                    <CheckCircle2 size={14} className="text-[#91a889]" />
                   ) : (
                     <AlertCircle
                       size={14}
-                      className={isDarkTheme ? "text-white" : "text-slate-600"}
+                      className={isDarkTheme ? "text-white" : "text-stone-600"}
                     />
                   )}
                 </div>
@@ -2758,7 +2977,7 @@ export default function App() {
                       strokeWidth="8"
                       fill="transparent"
                       className={
-                        isDarkTheme ? "text-white/10" : "text-slate-200"
+                        isDarkTheme ? "text-white/10" : "text-stone-200"
                       }
                     />
                     <circle
@@ -2828,7 +3047,7 @@ export default function App() {
           </aside>
 
           <div
-            className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}
+            className="relative flex min-h-0 min-w-0 flex-1"
           >
             <div
               data-tour="camera-stage"
@@ -2851,12 +3070,12 @@ export default function App() {
                   className={`absolute inset-0 flex flex-col items-center justify-center backdrop-blur-sm z-10 ${isDarkTheme ? "bg-black/45" : "bg-white/55"}`}
                 >
                   <div
-                    className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 ${isDarkTheme ? "bg-white/5" : "bg-slate-100"}`}
+                    className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 ${isDarkTheme ? "bg-white/5" : "bg-stone-100"}`}
                   >
                     <Camera
                       size={32}
                       className={
-                        isDarkTheme ? "text-white/20" : "text-slate-400"
+                        isDarkTheme ? "text-white/20" : "text-stone-400"
                       }
                     />
                   </div>
@@ -2871,20 +3090,16 @@ export default function App() {
               >
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setShowSessionLog(true)}
-                    className={`flex h-11 w-11 items-center justify-center rounded-full border transition-all ${iconButtonClass}`}
-                    title="Open Session Log"
-                    aria-label="Open Session Log"
+                    onClick={() => {
+                      setShowSettings(false);
+                      setShowSessionLog(true);
+                    }}
+                    className={`flex h-11 items-center justify-center gap-2 rounded-full border px-3.5 text-sm font-semibold transition-all ${iconButtonClass}`}
+                    title="Open activity"
+                    aria-label="Open activity"
                   >
                     <Bell size={18} />
-                  </button>
-                  <button
-                    onClick={() => setShowSettings((v) => !v)}
-                    className={`flex h-11 w-11 items-center justify-center rounded-full border transition-all ${iconButtonClass}`}
-                    title="Toggle Settings"
-                    aria-label="Toggle Settings"
-                  >
-                    <Settings2 size={18} />
+                    Activity
                   </button>
                   <button
                     onClick={isActive ? stop : () => void start()}
@@ -2902,18 +3117,18 @@ export default function App() {
                 className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}
               >
                 <div
-                  className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-dashed rounded-full ${isDarkTheme ? "border-white/20" : "border-slate-300"}`}
+                  className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-64 border-2 border-dashed rounded-full ${isDarkTheme ? "border-white/20" : "border-stone-300"}`}
                 />
               </div>
 
               <div className="absolute left-6 bottom-6 z-20">
                 {isActive ? (
                   <>
-                    <div className="text-sm font-bold uppercase tracking-wider">
+                    <div className="text-sm font-bold tracking-wide">
                       Stability {stabilityScore}%
                     </div>
                     <div
-                      className={`text-[11px] font-semibold uppercase tracking-wider ${quietTextClass}`}
+                      className={`text-[11px] font-semibold tracking-wide ${quietTextClass}`}
                     >
                       Tracking {trackingHealth}%
                     </div>
@@ -2922,7 +3137,7 @@ export default function App() {
               </div>
 
               <div
-                className={`absolute bottom-20 left-5 z-20 rounded-full border px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] backdrop-blur-md ${mlStatusClass} ${isActive ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"} transition-all motion-reduce:transition-none`}
+                className={`absolute bottom-20 left-5 z-20 rounded-full border px-3 py-2 text-[11px] font-semibold tracking-wide backdrop-blur-md ${mlStatusClass} ${isActive ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"} transition-all motion-reduce:transition-none`}
                 role="status"
                 aria-live="polite"
               >
@@ -2933,7 +3148,7 @@ export default function App() {
                 data-tour="session-log"
                 className={`z-40 transition-all duration-300 ease-out motion-reduce:transition-none ${
                   showSessionLog
-                    ? `fixed inset-x-3 bottom-3 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[22rem] ${
+                    ? `fixed inset-x-3 bottom-3 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[23rem] xl:w-96 ${
                         isSessionLogIdle
                           ? "h-[min(42dvh,22rem)]"
                           : "h-[min(60dvh,32rem)]"
@@ -2945,70 +3160,80 @@ export default function App() {
                   <section
                     className={`relative h-full overflow-hidden rounded-[1.75rem] border shadow-2xl backdrop-blur-2xl ${
                       isDarkTheme
-                        ? "border-white/10 bg-[#07090d]/95"
-                        : "border-slate-200 bg-white/95"
+                        ? "border-white/10 bg-[#171715]/95"
+                        : "border-stone-200 bg-white/95"
                     }`}
-                    aria-label="Session Log"
+                    aria-label="Activity"
                   >
                     <div
                       className="pointer-events-none absolute inset-0"
                       style={{
                         background: isDarkTheme
-                          ? "radial-gradient(circle at 100% 0%, rgba(56,189,248,0.1), transparent 34%)"
-                          : "radial-gradient(circle at 100% 0%, rgba(14,165,233,0.08), transparent 34%)",
+                          ? "radial-gradient(circle at 100% 0%, rgba(211,154,56,0.10), transparent 34%)"
+                          : "radial-gradient(circle at 100% 0%, rgba(211,154,56,0.08), transparent 34%)",
                       }}
                     />
                     <div className="pointer-events-none absolute left-4 right-4 top-4 z-10">
-                      <div className="pointer-events-auto ml-auto flex w-full items-center justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div
-                            className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border ${
-                              isDarkTheme
-                                ? "border-white/10 bg-black/30 text-white/75"
-                                : "border-slate-200 bg-white/75 text-slate-700"
-                            } backdrop-blur-md`}
+                      <div className="pointer-events-auto flex w-full items-center justify-between gap-2">
+                        <div
+                          className={`flex min-w-0 items-center gap-1 rounded-xl border p-1 ${
+                            isDarkTheme
+                              ? "border-white/10 bg-black/25"
+                              : "border-stone-200 bg-white/75"
+                          }`}
+                          role="tablist"
+                          aria-label="Utility panel"
+                        >
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected="true"
+                            className="flex min-h-11 items-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
                           >
                             <Bell size={16} aria-hidden="true" />
-                          </div>
-                          <div className="min-w-0">
-                            <h2 className="truncate text-[11px] font-bold uppercase tracking-[0.2em]">
-                              Session Log
-                            </h2>
-                            <p
-                              className={`mt-0.5 truncate text-[11px] ${
-                                isDarkTheme ? "text-white/45" : "text-slate-500"
-                              }`}
-                              aria-live="polite"
-                            >
-                              {isSessionLogIdle
-                                ? "Standby"
-                                : `${feedbacks.length} ${feedbacks.length === 1 ? "event" : "events"}`}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setShowSettings((v) => !v)}
-                            className={`flex h-11 w-11 items-center justify-center rounded-full border backdrop-blur-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${sessionLogIconButtonClass}`}
-                            title="Open Settings"
-                            aria-label="Open Settings"
-                          >
-                            <Settings size={18} aria-hidden="true" />
+                            Activity
                           </button>
                           <button
-                            onClick={() => setShowSessionLog(false)}
-                            className={`flex h-11 w-11 items-center justify-center rounded-full border backdrop-blur-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${sessionLogIconButtonClass}`}
-                            title="Hide Session Log"
-                            aria-label="Hide Session Log"
+                            type="button"
+                            role="tab"
+                            aria-selected="false"
+                            onClick={() => {
+                              setShowSessionLog(false);
+                              setShowSettings(true);
+                            }}
+                            className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
+                              isDarkTheme
+                                ? "text-white/65 hover:bg-white/10 hover:text-white"
+                                : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                            }`}
                           >
-                            <PanelRightClose size={18} aria-hidden="true" />
+                            <Settings size={16} aria-hidden="true" />
+                            Settings
                           </button>
                         </div>
+                        <button
+                          onClick={() => setShowSessionLog(false)}
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-colors ${sessionLogIconButtonClass}`}
+                          title="Close utility panel"
+                          aria-label="Close utility panel"
+                        >
+                          <X size={19} aria-hidden="true" />
+                        </button>
                       </div>
+                      <p
+                        className={`mt-2 pl-1 text-[11px] ${
+                          isDarkTheme ? "text-white/45" : "text-stone-500"
+                        }`}
+                        aria-live="polite"
+                      >
+                        {isSessionLogIdle
+                          ? "Standby"
+                          : `${feedbacks.length} ${feedbacks.length === 1 ? "event" : "events"}`}
+                      </p>
                     </div>
 
                     <div
-                      className={`absolute bottom-4 left-4 right-4 top-20 z-10 flex ${
+                        className={`absolute bottom-4 left-4 right-4 top-24 z-10 flex ${
                         isSessionLogIdle
                           ? "items-center justify-center"
                           : "pointer-events-none items-end justify-end"
@@ -3031,8 +3256,8 @@ export default function App() {
                           <div
                             className={`relative flex h-14 w-14 items-center justify-center rounded-full border ${
                               isDarkTheme
-                                ? "border-sky-400/20 bg-sky-400/[0.07] text-sky-300"
-                                : "border-sky-200 bg-sky-50 text-sky-600"
+                                ? "border-amber-400/20 bg-amber-400/[0.07] text-amber-300"
+                                : "border-amber-200 bg-amber-50 text-amber-600"
                             }`}
                             aria-hidden="true"
                           >
@@ -3040,19 +3265,20 @@ export default function App() {
                             <Activity size={22} />
                           </div>
                           <h3 className="mt-3 text-base font-semibold">
-                            Ready when you are
+                            No activity yet
                           </h3>
                           <p
                             className={`mt-1 max-w-[15rem] text-sm leading-relaxed ${
-                              isDarkTheme ? "text-white/55" : "text-slate-500"
+                              isDarkTheme ? "text-white/55" : "text-stone-500"
                             }`}
                           >
-                            Start monitoring to receive live posture feedback.
+                            Posture feedback will appear here when your session
+                            begins.
                           </p>
                           <button
                             onClick={() => void start()}
                             disabled={isLoading}
-                            className={`mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${primaryButtonClass} ${
+                            className={`mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${primaryButtonClass} ${
                               isLoading ? "cursor-not-allowed opacity-50" : ""
                             }`}
                           >
@@ -3061,7 +3287,10 @@ export default function App() {
                           </button>
                         </div>
                       ) : (
-                        <div className="w-full max-w-[22.5rem] flex flex-col-reverse gap-3">
+                        <div
+                          ref={sessionLogStackRef}
+                          className="flex w-full max-w-[22.5rem] flex-col-reverse gap-3"
+                        >
                           {visibleFeedbacks.map((f, index) => {
                             const opacity =
                               index === 0
@@ -3087,10 +3316,11 @@ export default function App() {
                             return (
                               <div
                                 key={f.id}
+                                data-feedback-card
                                 className={`rounded-2xl border px-4 py-3 transition-all ${
                                   isDarkTheme
                                     ? "border-transparent bg-black/70"
-                                    : "border-slate-300 bg-white shadow-[0_22px_45px_-30px_rgba(15,23,42,0.24)]"
+                                    : "border-stone-300 bg-white shadow-[0_22px_45px_-30px_rgba(15,23,42,0.24)]"
                                 }`}
                                 style={{
                                   opacity,
@@ -3102,7 +3332,7 @@ export default function App() {
                                     {f.type === "success" ? (
                                       <CheckCircle2
                                         size={14}
-                                        className="text-emerald-400 flex-shrink-0"
+                                        className="flex-shrink-0 text-[#91a889]"
                                       />
                                     ) : f.type === "warning" ? (
                                       <AlertCircle
@@ -3117,14 +3347,14 @@ export default function App() {
                                     ) : (
                                       <Bell
                                         size={14}
-                                        className="text-sky-400 flex-shrink-0"
+                                        className="text-amber-400 flex-shrink-0"
                                       />
                                     )}
                                     <span
-                                      className={`text-[11px] font-extrabold uppercase tracking-[0.16em] ${
+                                      className={`text-xs font-bold tracking-wide ${
                                         isDarkTheme
                                           ? "text-white/92"
-                                          : "text-slate-800"
+                                          : "text-stone-800"
                                       }`}
                                     >
                                       {f.title}
@@ -3134,7 +3364,7 @@ export default function App() {
                                     className={`text-[10px] ${
                                       isDarkTheme
                                         ? "text-white/45"
-                                        : "text-slate-500"
+                                        : "text-stone-500"
                                     }`}
                                   >
                                     {f.time}
@@ -3144,7 +3374,7 @@ export default function App() {
                                   className={`text-[13px] leading-relaxed ${
                                     isDarkTheme
                                       ? "text-white/92"
-                                      : "text-slate-700"
+                                      : "text-stone-700"
                                   }`}
                                 >
                                   {f.text}
@@ -3157,33 +3387,54 @@ export default function App() {
                       )}
                     </div>
                   </section>
-                ) : (
-                  <div className="pointer-events-auto absolute right-4 top-4 z-10 hidden flex-col items-center gap-3 lg:flex">
+                ) : !showSettings ? (
+                  <nav
+                    aria-label="Workspace panels"
+                    className="pointer-events-auto absolute right-4 top-4 z-10 hidden items-center gap-2 lg:flex"
+                  >
                     <button
-                      onClick={() => setShowSessionLog(true)}
-                      className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
-                      title="Show Session Log"
-                      aria-label="Show Session Log"
+                      onClick={() => {
+                        setShowSettings(false);
+                        setShowSessionLog(true);
+                      }}
+                      className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3.5 text-sm font-semibold shadow-lg backdrop-blur-xl transition-all ${
+                        isDarkTheme
+                          ? "border-white/10 bg-[#171715]/88 text-white/72 hover:bg-white/10 hover:text-white"
+                          : "border-[#ded8cc] bg-[#fffdf8]/90 text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                      }`}
+                      title="Open activity"
+                      aria-label="Open activity"
+                      aria-pressed="false"
                     >
-                      <PanelRightOpen size={16} />
+                      <PanelRightOpen size={17} aria-hidden="true" />
+                      <span>Activity</span>
                     </button>
                     <button
-                      onClick={() => setShowSettings((v) => !v)}
-                      className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
-                      title="Toggle Settings"
-                      aria-label="Toggle Settings"
+                      onClick={() => {
+                        setShowSessionLog(false);
+                        setShowSettings(true);
+                      }}
+                      className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3.5 text-sm font-semibold shadow-lg backdrop-blur-xl transition-all ${
+                        isDarkTheme
+                          ? "border-white/10 bg-[#171715]/88 text-white/72 hover:bg-white/10 hover:text-white"
+                          : "border-[#ded8cc] bg-[#fffdf8]/90 text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                      }`}
+                      title="Open settings"
+                      aria-label="Open settings"
+                      aria-pressed="false"
                     >
-                      <Settings2 size={16} />
+                      <Settings size={17} aria-hidden="true" />
+                      <span>Settings</span>
                     </button>
-                  </div>
-                )}
+                  </nav>
+                ) : null}
               </div>
             </div>
 
             <div
               className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${
                 showSettings
-                  ? "fixed inset-0 z-50 w-full bg-black/55 p-3 opacity-100 lg:static lg:w-80 lg:bg-transparent lg:p-0"
+                  ? "fixed inset-x-3 bottom-3 z-50 h-[min(72dvh,42rem)] w-auto opacity-100 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[23rem] xl:w-96"
                   : "hidden w-0 opacity-0 lg:block"
               }`}
               inert={!showSettings}
@@ -3192,25 +3443,50 @@ export default function App() {
               <div
                 aria-hidden={!showSettings}
                 data-tour="settings-panel"
-                className={`settings-panel-shell ${isDarkTheme ? "settings-panel-dark" : "settings-panel-light"} pointer-events-auto flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border transition-transform duration-200 ease-in-out motion-reduce:transition-none lg:w-80 lg:rounded-[2rem] ${showSettings ? "translate-x-0" : "translate-x-3"} ${settingsPanelClass}`}
+                className={`settings-panel-shell ${isDarkTheme ? "settings-panel-dark" : "settings-panel-light"} pointer-events-auto flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border shadow-2xl transition-transform duration-200 ease-in-out motion-reduce:transition-none lg:w-[23rem] xl:w-96 ${showSettings ? "translate-x-0" : "translate-x-3"} ${settingsPanelClass}`}
               >
-                <div className="flex flex-shrink-0 items-center justify-between px-6 pb-4 pt-6">
-                  <div className="flex items-center gap-2">
-                    <Settings2
-                      size={18}
-                      className={
-                        isDarkTheme ? "text-white/60" : "text-slate-500"
-                      }
-                    />
-                    <h3 className="font-bold text-sm uppercase tracking-wider">
+                <div className="flex flex-shrink-0 items-center justify-between gap-2 px-5 pb-4 pt-5">
+                  <div
+                    className={`flex min-w-0 items-center gap-1 rounded-xl border p-1 ${
+                      isDarkTheme
+                        ? "border-white/10 bg-black/25"
+                        : "border-stone-200 bg-white/75"
+                    }`}
+                    role="tablist"
+                    aria-label="Utility panel"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected="false"
+                      onClick={() => {
+                        setShowSettings(false);
+                        setShowSessionLog(true);
+                      }}
+                      className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
+                        isDarkTheme
+                          ? "text-white/65 hover:bg-white/10 hover:text-white"
+                          : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                      }`}
+                    >
+                      <Bell size={16} aria-hidden="true" />
+                      Activity
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected="true"
+                      className="flex min-h-11 items-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                    >
+                      <Settings size={16} aria-hidden="true" />
                       Settings
-                    </h3>
+                    </button>
                   </div>
                   <button
                     onClick={() => setShowSettings(false)}
-                    className={`flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${isDarkTheme ? "text-white/70 hover:text-white hover:bg-white/10" : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"}`}
-                    title="Close settings"
-                    aria-label="Close settings"
+                    className={`flex h-11 w-11 items-center justify-center rounded-xl border transition-colors ${isDarkTheme ? "border-white/10 text-white/70 hover:bg-white/10 hover:text-white" : "border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-900"}`}
+                    title="Close utility panel"
+                    aria-label="Close utility panel"
                   >
                     <X size={20} />
                   </button>
@@ -3219,26 +3495,29 @@ export default function App() {
                 <div className="settings-scroll-frame relative min-h-0 flex-1">
                   <div
                     data-testid="settings-scroll-area"
-                    className="settings-scroll-area h-full overflow-y-auto px-6 pb-6 pt-4"
+                    className="settings-scroll-area h-full overflow-y-auto px-5 pb-5 pt-3"
                     role="region"
                     aria-label="Settings controls"
                     tabIndex={0}
                   >
-                    <div className="space-y-8">
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
+                    <div className="space-y-3">
+                  <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
+                    <div className="flex items-center justify-between gap-3">
                       <label
-                        className={`text-xs font-semibold ${subtleTextClass}`}
+                        htmlFor="camera-source"
+                        className={`flex items-center gap-2 text-xs font-semibold ${subtleTextClass}`}
                       >
-                        Camera Source
+                        <Camera size={15} aria-hidden="true" />
+                        Camera
                       </label>
                       <span
-                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                        className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${isDarkTheme ? "border-white/10 bg-white/5" : "border-stone-200 bg-stone-50"} ${mutedTextClass}`}
                       >
                         {cameraDevices.length || 0} detected
                       </span>
                     </div>
                     <select
+                      id="camera-source"
                       value={selectedCameraId}
                       onChange={(e) => {
                         const nextCameraId = e.target.value;
@@ -3250,7 +3529,7 @@ export default function App() {
                           }, 0);
                         }
                       }}
-                      className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white hover:bg-white/10" : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"}`}
+                      className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white hover:bg-white/10" : "border-stone-200 bg-white text-stone-900 hover:bg-stone-50"}`}
                     >
                       {cameraDevices.length === 0 ? (
                         <option value="">No camera detected yet</option>
@@ -3261,8 +3540,8 @@ export default function App() {
                           value={camera.id}
                           className={
                             isDarkTheme
-                              ? "bg-slate-900 text-white"
-                              : "bg-white text-slate-900"
+                              ? "bg-stone-900 text-white"
+                              : "bg-white text-stone-900"
                           }
                         >
                           {camera.label}
@@ -3272,23 +3551,22 @@ export default function App() {
                     <p
                       className={`text-[11px] leading-relaxed ${mutedTextClass}`}
                     >
-                      If labels are blank, allow camera access first, then
-                      reopen this panel or start a session.
+                      Camera names appear after permission is granted.
                     </p>
-                  </div>
+                  </section>
 
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
-                      <label
-                        className={`text-xs font-semibold ${subtleTextClass}`}
+                  <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div
+                        className={`flex items-center gap-2 text-xs font-semibold ${subtleTextClass}`}
                       >
+                        {isDarkTheme ? (
+                          <Moon size={15} aria-hidden="true" />
+                        ) : (
+                          <Sun size={15} aria-hidden="true" />
+                        )}
                         Theme
-                      </label>
-                      <span
-                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
-                      >
-                        {theme === "dark" ? "Dark Mode" : "Light Mode"}
-                      </span>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {(
@@ -3303,11 +3581,11 @@ export default function App() {
                           className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
                             theme === mode
                               ? isDarkTheme
-                                ? "border-white/40 bg-white text-black"
-                                : "border-slate-900 bg-slate-900 text-white"
+                                ? "border-[#d39a38]/55 bg-[#d39a38]/15 text-[#e8bd70]"
+                                : "border-[#d39a38]/45 bg-[#fff5df] text-[#8a5a14]"
                               : isDarkTheme
                                 ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                : "border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-900"
                           }`}
                         >
                           <Icon size={16} />
@@ -3315,39 +3593,45 @@ export default function App() {
                         </button>
                       ))}
                     </div>
-                  </div>
+                  </section>
 
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
-                      <label
-                        className={`text-xs font-semibold ${subtleTextClass}`}
-                      >
-                        Audio Feedback
-                      </label>
-                      <span
-                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
-                      >
-                        5s cooldown
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {(["off", "voice"] as const).map((mode) => (
-                        <button
-                          key={mode}
-                          onClick={() => setAudioMode(mode)}
-                          className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
-                            audioMode === mode
-                              ? isDarkTheme
-                                ? "border-white/40 bg-white text-black"
-                                : "border-slate-900 bg-slate-900 text-white"
-                              : isDarkTheme
-                                ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                          }`}
+                  <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div
+                          className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
                         >
-                          {mode === "off" ? "Off" : "Voice"}
-                        </button>
-                      ))}
+                          <Volume2 size={16} aria-hidden="true" />
+                          Voice prompts
+                        </div>
+                        <p className={`mt-1 text-[11px] ${mutedTextClass}`}>
+                          Speak stable posture changes
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={audioMode === "voice"}
+                        aria-label="Voice prompts"
+                        onClick={() =>
+                          setAudioMode(audioMode === "voice" ? "off" : "voice")
+                        }
+                        className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors ${
+                          audioMode === "voice"
+                            ? "border-[#d39a38] bg-[#d39a38]"
+                            : isDarkTheme
+                              ? "border-white/15 bg-white/10"
+                              : "border-stone-300 bg-stone-200"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-1 h-[1.125rem] w-[1.125rem] rounded-full bg-white shadow-sm transition-transform ${
+                            audioMode === "voice"
+                              ? "translate-x-[1.55rem]"
+                              : "translate-x-1"
+                          }`}
+                        />
+                      </button>
                     </div>
                     <div
                       className={`flex justify-between items-center px-1 text-[11px] ${mutedTextClass}`}
@@ -3373,7 +3657,7 @@ export default function App() {
                           "test-voice",
                         );
                       }}
-                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"}`}
+                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-stone-200 bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900"}`}
                     >
                       <Volume2 size={16} />
                       Test Voice
@@ -3381,109 +3665,102 @@ export default function App() {
                     <p
                       className={`text-[11px] leading-relaxed ${mutedTextClass}`}
                     >
-                      Voice prompts play only on stable posture changes and are
-                      suppressed during weak tracking.
+                      Prompts play only after a stable posture change.
                     </p>
-                  </div>
+                  </section>
 
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
-                      <label
-                        className={`text-xs font-semibold ${subtleTextClass}`}
+                  <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div
+                        className={`flex items-center gap-2 text-xs font-semibold ${subtleTextClass}`}
                       >
+                        <BookOpen size={15} aria-hidden="true" />
                         Tutorial
-                      </label>
+                      </div>
                       <span
-                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
+                        className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${isDarkTheme ? "border-white/10 bg-white/5" : "border-stone-200 bg-stone-50"} ${mutedTextClass}`}
                       >
-                        Reopen anytime
+                        Available anytime
                       </span>
                     </div>
                     <button
                       onClick={openTutorial}
-                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"}`}
+                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-stone-200 bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900"}`}
                     >
                       <BookOpen size={16} />
                       Show Tutorial
                     </button>
-                  </div>
+                  </section>
 
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
-                      <label
-                        className={`text-xs font-semibold ${subtleTextClass}`}
+                  <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div
+                          className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
+                        >
+                          <Monitor size={16} aria-hidden="true" />
+                          Floating window
+                        </div>
+                        <p className={`mt-1 text-[11px] ${mutedTextClass}`}>
+                          Keep posture status visible outside this tab
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={floatingWindowEnabled}
+                        aria-label="Floating window"
+                        onClick={() =>
+                          floatingWindowSupported &&
+                          setFloatingWindowEnabled((value) => !value)
+                        }
+                        disabled={!floatingWindowSupported}
+                        className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors ${
+                          !floatingWindowSupported
+                            ? "cursor-not-allowed border-stone-300 bg-stone-200 opacity-50"
+                            : floatingWindowEnabled
+                              ? "border-[#d39a38] bg-[#d39a38]"
+                              : isDarkTheme
+                                ? "border-white/15 bg-white/10"
+                                : "border-stone-300 bg-stone-200"
+                        }`}
                       >
-                        Floating Window
-                      </label>
-                      <span
-                        className={`text-[10px] font-bold uppercase tracking-wider ${mutedTextClass}`}
-                      >
-                        {floatingWindowReady ? "Open" : "Optional"}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() =>
-                        floatingWindowSupported &&
-                        setFloatingWindowEnabled((value) => !value)
-                      }
-                      disabled={!floatingWindowSupported}
-                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${
-                        !floatingWindowSupported
-                          ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                          : floatingWindowEnabled
-                            ? isDarkTheme
-                              ? "border-white/40 bg-white text-black"
-                              : "border-slate-900 bg-slate-900 text-white"
-                            : isDarkTheme
-                              ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white"
-                              : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900"
-                      }`}
-                    >
-                      <Monitor size={16} />
-                      {floatingWindowEnabled
-                        ? "Close Floating Window"
-                        : "Open Floating Window"}
-                    </button>
-                    <p
-                      className={`text-[11px] leading-relaxed ${mutedTextClass}`}
-                    >
-                      {floatingWindowSupported
-                        ? "While a session is running, the floating window stays hidden until you switch away or minimize the browser, then it tries to open once and stays available for the rest of the session. You can still open or close it manually here."
-                        : autoPipStatusMessage}
-                    </p>
-                    <div
-                      className={`flex justify-between items-center px-1 text-[11px] ${mutedTextClass}`}
-                    >
-                      <span>Status: {autoPipStatusLabel}</span>
-                      <span>{isActive ? "Session live" : "Session idle"}</span>
+                        <span
+                          className={`absolute top-1 h-[1.125rem] w-[1.125rem] rounded-full bg-white shadow-sm transition-transform ${
+                            floatingWindowEnabled
+                              ? "translate-x-[1.55rem]"
+                              : "translate-x-1"
+                          }`}
+                        />
+                      </button>
                     </div>
                     {floatingWindowSupported ? (
                       <p
                         className={`text-[11px] leading-relaxed ${mutedTextClass}`}
                       >
-                        {autoPipStatusMessage}
+                        Keeps a compact posture status available when you switch
+                        away from this tab.
                       </p>
                     ) : null}
-                  </div>
+                    <div
+                      className={`flex items-start justify-between gap-3 text-[11px] leading-relaxed ${mutedTextClass}`}
+                    >
+                      <span>{autoPipStatusMessage}</span>
+                      <span className="shrink-0">
+                        {floatingWindowReady
+                          ? "Open"
+                          : isActive
+                            ? "Live"
+                            : autoPipStatusLabel}
+                      </span>
                     </div>
-
-                    <div className="mt-8">
-                      <div
-                        className={`p-4 rounded-2xl border ${isDarkTheme ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"}`}
-                      >
-                        <p
-                          className={`text-[10px] leading-relaxed italic ${mutedTextClass}`}
-                        >
-                          Settings now focus on the essentials: camera source,
-                          dark or light mode, audio feedback, and voice testing.
-                        </p>
-                      </div>
+                  </section>
                     </div>
                   </div>
-                </div>
               </div>
             </div>
           </div>
+        </div>
         </div>
 
         <div className="grid flex-shrink-0 grid-flow-dense grid-cols-2 gap-3 lg:hidden">
@@ -3494,11 +3771,11 @@ export default function App() {
             <div
               className={`flex items-center justify-between z-10 ${subtleTextClass}`}
             >
-              <span className="text-xs font-medium uppercase tracking-wider">
+              <span className="text-xs font-medium tracking-wide">
                 Posture Score
               </span>
               {score > 70 ? (
-                <CheckCircle2 size={14} className="text-emerald-400" />
+                <CheckCircle2 size={14} className="text-[#91a889]" />
               ) : (
                 <AlertCircle size={14} className="text-amber-400" />
               )}
@@ -3526,7 +3803,7 @@ export default function App() {
                   stroke="currentColor"
                   strokeWidth="8"
                   fill="transparent"
-                  className={isDarkTheme ? "text-white/10" : "text-slate-200"}
+                  className={isDarkTheme ? "text-white/10" : "text-stone-200"}
                 />
                 <circle
                   cx="40"
@@ -3608,95 +3885,134 @@ export default function App() {
         : null}
 
       {showTutorial ? (
-        <div className="fixed inset-0 z-50 pointer-events-none">
+        <div className="pointer-events-none fixed inset-0 z-50">
           {tutorialHighlightStyle ? (
             <div
-              className={`fixed rounded-[1.75rem] border-2 transition-all duration-200 ${isDarkTheme ? "border-sky-300" : "border-sky-600"}`}
+              className="fixed rounded-[1.75rem] border-2 border-[#d39a38] transition-all duration-300 motion-reduce:transition-none"
               style={{
                 ...tutorialHighlightStyle,
-                boxShadow: `0 0 0 9999px ${isDarkTheme ? "rgba(2, 6, 23, 0.78)" : "rgba(241, 245, 249, 0.82)"}`,
+                boxShadow: `0 0 0 9999px ${isDarkTheme ? "rgba(16, 16, 15, 0.82)" : "rgba(242, 239, 231, 0.84)"}`,
               }}
+              aria-hidden="true"
             />
           ) : (
             <div
               className={`fixed inset-0 backdrop-blur-md ${tutorialOverlayClass}`}
+              aria-hidden="true"
             />
           )}
 
           <div
-            className={`fixed pointer-events-auto rounded-2xl border p-5 shadow-2xl transition-all duration-200 ${isDarkTheme ? "border-white/10 bg-[#040507] text-white" : "border-slate-200 bg-white text-slate-900"}`}
+            ref={tutorialCardRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tutorial-title"
+            aria-describedby="tutorial-description tutorial-keyboard-hint"
+            className={`pointer-events-auto fixed rounded-[1.75rem] border p-5 shadow-[0_28px_90px_-28px_rgba(0,0,0,0.65)] transition-[left,top,bottom] duration-300 motion-reduce:transition-none sm:p-6 ${isDarkTheme ? "border-white/12 bg-[#171715] text-[#f4f0e8]" : "border-[#ded8cc] bg-[#fffdf8] text-[#1c1b19]"}`}
             style={tutorialCardStyle}
           >
             <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.22em] text-sky-500">
-                <BookOpen size={15} />
-                Guided Tour
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#d39a38]">
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d39a38]/30 bg-[#d39a38]/10">
+                  <BookOpen size={16} aria-hidden="true" />
+                </span>
+                Quick tour
               </div>
               <button
                 onClick={closeTutorial}
-                className={`-mt-1 flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
+                className={`flex h-11 w-11 items-center justify-center rounded-full border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white" : "border-[#ded8cc] bg-white text-[#6f6a61] hover:bg-[#f2efe7] hover:text-[#1c1b19]"}`}
                 aria-label="Close tutorial"
-                title="Close tutorial"
+                title="Skip tutorial"
               >
-                <X size={16} />
+                <X size={18} aria-hidden="true" />
               </button>
             </div>
 
-            <div
-              className={`mt-3 text-[11px] font-bold uppercase tracking-[0.2em] ${mutedTextClass}`}
-            >
-              Step {tutorialStepIndex + 1} of {TUTORIAL_STEPS.length}
+            <div ref={tutorialContentRef} key={tutorialStepIndex}>
+              <div
+                data-tutorial-reveal
+                className={`mt-5 text-xs font-semibold ${mutedTextClass}`}
+              >
+                {tutorialStepIndex + 1} / {TUTORIAL_STEPS.length}
+              </div>
+              <h2
+                id="tutorial-title"
+                data-tutorial-reveal
+                className="mt-2 max-w-5xl text-2xl font-bold leading-tight tracking-[-0.025em]"
+              >
+                {currentTutorialStep.title}
+              </h2>
+              <p
+                id="tutorial-description"
+                data-tutorial-reveal
+                className={`mt-3 text-[0.9375rem] leading-6 ${quietTextClass}`}
+              >
+                {currentTutorialStep.body}
+              </p>
             </div>
-            <h2 className="mt-2 text-xl font-black tracking-tight">
-              {currentTutorialStep.title}
-            </h2>
-            <p className={`mt-3 text-sm leading-6 ${quietTextClass}`}>
-              {currentTutorialStep.body}
+
+            <p
+              id="tutorial-keyboard-hint"
+              className={`mt-5 rounded-xl border px-3 py-2 text-xs ${
+                isDarkTheme
+                  ? "border-white/10 bg-black/20 text-white/60"
+                  : "border-[#e5dfd4] bg-[#f6f2ea] text-[#6f6a61]"
+              }`}
+            >
+              Space / → Next · ← Back · Esc Skip
             </p>
 
-            <div className="mt-5 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5">
+            <div className="mt-4 flex items-center justify-center">
+              <div className="flex items-center" aria-label="Tutorial progress">
                 {TUTORIAL_STEPS.map((step, index) => (
                   <button
                     key={step.target}
                     onClick={() => setTutorialStepIndex(index)}
-                    className={`h-2.5 rounded-full transition-all ${
-                      index === tutorialStepIndex
-                        ? isDarkTheme
-                          ? "w-6 bg-sky-300"
-                          : "w-6 bg-sky-600"
-                        : isDarkTheme
-                          ? "w-2.5 bg-white/20 hover:bg-white/35"
-                          : "w-2.5 bg-slate-300 hover:bg-slate-400"
-                    }`}
+                    className="group flex h-11 w-11 items-center justify-center rounded-full"
                     aria-label={`Go to tutorial step ${index + 1}`}
-                  />
+                    aria-current={index === tutorialStepIndex ? "step" : undefined}
+                  >
+                    <span
+                      className={`block h-2.5 rounded-full transition-all duration-300 ${
+                        index === tutorialStepIndex
+                          ? "w-7 bg-[#d39a38]"
+                          : isDarkTheme
+                            ? "w-2.5 bg-white/25 group-hover:bg-white/45"
+                            : "w-2.5 bg-[#c9c2b6] group-hover:bg-[#938b80]"
+                      }`}
+                    />
+                  </button>
                 ))}
               </div>
+            </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={goToPreviousTutorialStep}
-                  disabled={tutorialStepIndex === 0}
-                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
-                    tutorialStepIndex === 0
-                      ? "cursor-not-allowed opacity-40"
-                      : isDarkTheme
-                        ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
-                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-                >
-                  Back
-                </button>
-                <button
-                  onClick={goToNextTutorialStep}
-                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${primaryButtonClass}`}
-                >
-                  {tutorialStepIndex === TUTORIAL_STEPS.length - 1
-                    ? "Finish"
-                    : "Next"}
-                </button>
-              </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                onClick={goToPreviousTutorialStep}
+                disabled={tutorialStepIndex === 0}
+                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                  tutorialStepIndex === 0
+                    ? "cursor-not-allowed opacity-40"
+                    : isDarkTheme
+                      ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+                      : "border-[#ded8cc] bg-white text-[#47433d] hover:bg-[#f2efe7] hover:text-[#1c1b19]"
+                }`}
+              >
+                Back
+              </button>
+              <button
+                data-tutorial-primary
+                onClick={goToNextTutorialStep}
+                className={`min-h-11 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${primaryButtonClass}`}
+              >
+                {tutorialStepIndex === TUTORIAL_STEPS.length - 1
+                  ? "Finish"
+                  : "Next"}
+              </button>
+            </div>
+
+            <div className="sr-only" aria-live="polite" aria-atomic="true">
+              Tutorial step {tutorialStepIndex + 1} of {TUTORIAL_STEPS.length}: {currentTutorialStep.title}
             </div>
           </div>
         </div>
@@ -3729,11 +4045,11 @@ function FloatingStatusPanel({
   const scoreTone =
     score > 80
       ? {
-          from: "#34d399",
-          to: "#059669",
-          cardBorder: "#d1fae5",
-          cardGlow: "#ecfdf5",
-          dot: "#10b981",
+          from: "#91a889",
+          to: "#607a62",
+          cardBorder: "#dfe8dc",
+          cardGlow: "#f1f5ec",
+          dot: "#718f73",
           title: "Looking good!",
         }
       : score > 60
@@ -3805,7 +4121,7 @@ function FloatingStatusPanel({
         >
           <span
             style={{
-              background: isActive ? scoreTone.dot : "#cbd5e1",
+              background: isActive ? scoreTone.dot : "#d4cec2",
               borderRadius: 999,
               display: "block",
               flexShrink: 0,
@@ -3816,7 +4132,7 @@ function FloatingStatusPanel({
           <div style={{ minWidth: 0 }}>
             <div
               style={{
-                color: "#0f172a",
+                color: "#1c1b19",
                 fontSize: 14,
                 fontWeight: 800,
                 letterSpacing: "-0.01em",
@@ -3827,7 +4143,7 @@ function FloatingStatusPanel({
             </div>
             <div
               style={{
-                color: "#64748b",
+                color: "#6f6a61",
                 fontSize: 12.5,
                 fontWeight: 600,
                 lineHeight: 1.4,
@@ -3840,7 +4156,7 @@ function FloatingStatusPanel({
           </div>
           <div
             style={{
-              color: "#0f172a",
+              color: "#1c1b19",
               flexShrink: 0,
               fontSize: 28,
               fontWeight: 900,
@@ -3899,7 +4215,7 @@ function FloatingStatusPanel({
           <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
             <span
               style={{
-                background: isActive ? scoreTone.dot : "#cbd5e1",
+                background: isActive ? scoreTone.dot : "#d4cec2",
                 borderRadius: 999,
                 display: "block",
                 height: 7,
@@ -3908,7 +4224,7 @@ function FloatingStatusPanel({
             />
             <span
               style={{
-                color: "#334155",
+                color: "#47433d",
                 fontSize: 15,
                 fontWeight: 700,
                 letterSpacing: "-0.01em",
@@ -3965,7 +4281,7 @@ function FloatingStatusPanel({
                 cx="60"
                 cy="60"
                 r={radius}
-                stroke="#f1f5f9"
+                stroke="#eee9df"
                 strokeWidth="10"
                 fill="none"
               />
@@ -3998,7 +4314,7 @@ function FloatingStatusPanel({
             >
               <span
                 style={{
-                  color: "#1e293b",
+                  color: "#34312c",
                   fontSize: "min(13vmin, 60px)",
                   fontWeight: 800,
                   letterSpacing: "-0.06em",
@@ -4010,7 +4326,7 @@ function FloatingStatusPanel({
               </span>
               <span
                 style={{
-                  color: "#94a3b8",
+                  color: "#9b958c",
                   fontSize: 14,
                   fontWeight: 800,
                   letterSpacing: "0.2em",
@@ -4076,7 +4392,7 @@ function FloatingStatusPanel({
             <div style={{ minWidth: 0, position: "relative", zIndex: 1 }}>
               <h3
                 style={{
-                  color: "#1e293b",
+                  color: "#34312c",
                   fontSize: 18,
                   fontWeight: 800,
                   lineHeight: 1.2,
@@ -4087,7 +4403,7 @@ function FloatingStatusPanel({
               </h3>
               <p
                 style={{
-                  color: "#64748b",
+                  color: "#6f6a61",
                   fontSize: 15.5,
                   fontWeight: 650,
                   lineHeight: 1.55,

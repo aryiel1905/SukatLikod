@@ -2,7 +2,7 @@
 @source "./";
 
 @theme {
-  --font-sans: "Geist Variable", "Segoe UI", sans-serif;
+  --font-sans: "Outfit Variable", "Segoe UI", sans-serif;
 }
 
 html,
@@ -18,8 +18,8 @@ body {
   min-height: 100dvh;
   overflow-x: hidden;
   overflow-y: auto;
-  background: #0c1118;
-  font-family: "Geist Variable", "Segoe UI", sans-serif;
+  background: #10100f;
+  font-family: "Outfit Variable", "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -41,8 +41,25 @@ input {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 2px solid #7dd3fc;
+  outline: 2px solid #d39a38;
   outline-offset: 3px;
+}
+
+.uprightly-shell {
+  isolation: isolate;
+  background-attachment: fixed;
+}
+
+.uprightly-shell-dark {
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(211, 154, 56, 0.08), transparent 28rem),
+    radial-gradient(circle at 88% 92%, rgba(145, 168, 137, 0.05), transparent 30rem);
+}
+
+.uprightly-shell-light {
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(211, 154, 56, 0.12), transparent 30rem),
+    radial-gradient(circle at 88% 92%, rgba(126, 112, 91, 0.07), transparent 32rem);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -36,8 +36,8 @@ export function MetricCard({
             ? "border-white/10 bg-gradient-to-br from-white/10 to-transparent"
             : "border-white/10 bg-gradient-to-br from-white/10 via-white/[0.045] to-transparent hover:-translate-y-0.5 hover:bg-white/10"
           : paused
-            ? "border-slate-200 bg-gradient-to-br from-white to-slate-50"
-            : "border-slate-200 bg-gradient-to-br from-white to-slate-50 hover:-translate-y-0.5 hover:bg-white"
+            ? "border-stone-200 bg-gradient-to-br from-white to-stone-50"
+            : "border-stone-200 bg-gradient-to-br from-white to-stone-50 hover:-translate-y-0.5 hover:bg-white"
       }`}
     >
       <div
@@ -45,13 +45,13 @@ export function MetricCard({
           paused
             ? isDarkTheme
               ? "text-white/45"
-              : "text-slate-400"
+              : "text-stone-400"
             : isDarkTheme
               ? "text-white/60"
-              : "text-slate-500"
+              : "text-stone-500"
         }`}
       >
-        <span className="text-xs font-medium uppercase tracking-wider">
+        <span className="text-xs font-medium tracking-wide">
           {label}
         </span>
         <Icon size={14} aria-hidden="true" />
@@ -62,8 +62,8 @@ export function MetricCard({
             paused
               ? isDarkTheme
                 ? "text-white/65"
-                : "text-slate-500"
-              : colorClass || (isDarkTheme ? "text-white" : "text-slate-900")
+                : "text-stone-500"
+              : colorClass || (isDarkTheme ? "text-white" : "text-stone-900")
           }`}
         >
           {value}
@@ -73,10 +73,10 @@ export function MetricCard({
             paused
               ? isDarkTheme
                 ? "text-white/40"
-                : "text-slate-400"
+                : "text-stone-400"
               : isDarkTheme
                 ? "text-white/50"
-                : "text-slate-500"
+                : "text-stone-500"
           }`}
         >
           {unit}

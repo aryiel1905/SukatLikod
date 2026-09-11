@@ -30,23 +30,30 @@ test("mobile dashboard stays reachable without horizontal overflow", async ({
   expect(viewportMetrics.scrollHeight).toBeGreaterThan(600);
 });
 
-test("idle session log is compact and exposes a gear settings control", async ({
+test("idle activity sheet is compact and exposes consistent panel tabs", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Open Session Log" }).click();
+  await page.getByRole("button", { name: "Open activity" }).click();
 
-  const sessionLog = page.locator('section[aria-label="Session Log"]');
-  const settingsButton = page.getByRole("button", { name: "Open Settings" });
+  const activityPanel = page.locator('section[aria-label="Activity"]');
+  const settingsTab = page.getByRole("tab", { name: "Settings" });
 
-  await expect(sessionLog).toBeVisible();
-  await expect(page.getByText("Ready when you are")).toBeVisible();
-  await expect(settingsButton.locator(".lucide-settings")).toBeVisible();
+  await expect(activityPanel).toBeVisible();
+  await expect(page.getByText("No activity yet")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Activity" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(settingsTab).toHaveAttribute("aria-selected", "false");
+  await expect(
+    page.getByRole("button", { name: "Close utility panel" }),
+  ).toBeVisible();
 
   const [sheetBox, settingsBox] = await Promise.all([
-    sessionLog.boundingBox(),
-    settingsButton.boundingBox(),
+    activityPanel.boundingBox(),
+    settingsTab.boundingBox(),
   ]);
 
   expect(sheetBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(355);
@@ -68,8 +75,91 @@ test("desktop camera remains the dominant canvas", async ({ page }) => {
   const stageBox = await cameraStage.boundingBox();
   expect(stageBox?.width ?? 0).toBeGreaterThan(800);
   await expect(
-    page.getByRole("button", { name: "Show Session Log" }),
+    page.getByRole("button", { name: "Open activity" }),
   ).toBeVisible();
+  const workspacePanels = page.getByRole("navigation", {
+    name: "Workspace panels",
+  });
+  await expect(workspacePanels).toBeVisible();
+  await expect(
+    workspacePanels
+      .getByRole("button", { name: "Open activity" })
+      .getByText("Activity", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("button", { name: "Open settings" })
+      .getByText("Settings", { exact: true }),
+  ).toBeVisible();
+});
+
+test("activity and settings use one mutually exclusive utility panel", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const cameraStage = page.locator('[data-tour="camera-stage"]');
+  const cameraBoxBefore = await cameraStage.boundingBox();
+  await page.getByRole("button", { name: "Open activity" }).click();
+
+  const activityPanel = page.locator('section[aria-label="Activity"]');
+  await expect(activityPanel).toBeVisible();
+  await expect
+    .poll(async () => (await activityPanel.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(360);
+  const activityBox = await activityPanel.boundingBox();
+  await page.getByRole("tab", { name: "Settings" }).click();
+
+  const settingsPanel = page.locator('[data-tour="settings-panel"]');
+  const settingsTab = page.getByRole("tab", { name: "Settings" });
+  await expect(activityPanel).toBeHidden();
+  await expect(settingsPanel).toBeVisible();
+  await expect(page.getByTestId("settings-scroll-area")).toBeVisible();
+  await expect(settingsTab).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(settingsTab.locator(".lucide-settings")).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "Utility panel" })).toHaveCount(1);
+
+  const [settingsBox, cameraBoxAfter] = await Promise.all([
+    settingsPanel.boundingBox(),
+    cameraStage.boundingBox(),
+  ]);
+  expect(Math.abs((settingsBox?.x ?? 0) - (activityBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((settingsBox?.width ?? 0) - (activityBox?.width ?? 0)),
+  ).toBeLessThanOrEqual(1);
+  expect(cameraBoxAfter?.width).toBeCloseTo(cameraBoxBefore?.width ?? 0, 0);
+});
+
+test("desktop brand title stays fully inside the rail", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 760 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const rail = page.getByTestId("desktop-rail");
+  const title = page.getByRole("heading", { name: "Uprightly" });
+  const [railBox, titleBox, titleStyles] = await Promise.all([
+    rail.boundingBox(),
+    title.boundingBox(),
+    title.evaluate((element) => {
+      const styles = window.getComputedStyle(element);
+      return {
+        color: styles.color,
+        backgroundClip: styles.backgroundClip,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      };
+    }),
+  ]);
+
+  expect(titleBox?.x ?? -1).toBeGreaterThanOrEqual(railBox?.x ?? 0);
+  expect((titleBox?.x ?? 0) + (titleBox?.width ?? 0)).toBeLessThanOrEqual(
+    (railBox?.x ?? 0) + (railBox?.width ?? 0),
+  );
+  expect(titleStyles.color).not.toBe("rgba(0, 0, 0, 0)");
+  expect(titleStyles.backgroundClip).not.toBe("text");
+  expect(titleStyles.scrollWidth).toBeLessThanOrEqual(titleStyles.clientWidth);
 });
 
 test("short desktop view keeps the complete rail inside the viewport", async ({
@@ -101,7 +191,7 @@ test("short desktop view keeps the complete rail inside the viewport", async ({
 test("settings uses an inset internal scrollbar", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 760 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Toggle Settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
 
   const scrollArea = page.getByTestId("settings-scroll-area");
   await expect(scrollArea).toBeVisible();
@@ -137,4 +227,112 @@ test("dashboard has no serious or critical accessibility violations", async ({
     ),
   );
   expect(severeViolations).toEqual([]);
+});
+
+test("tutorial keyboard controls take precedence over the session shortcut", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const tutorialLauncher = page.getByRole("button", { name: "Open Tutorial" });
+  await tutorialLauncher.click();
+
+  const dialog = page.getByRole("dialog", { name: "Begin when you're ready" });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next" })).toBeFocused();
+
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("dialog", { name: "Frame your upper body" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start Session" }).first(),
+  ).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByRole("dialog", { name: "Read the overall signal" }),
+  ).toBeVisible();
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    page.getByRole("dialog", { name: "Frame your upper body" }),
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(tutorialLauncher).toBeFocused();
+});
+
+test("tutorial remains within constrained viewports", async ({ page }) => {
+  const viewports = [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 768, height: 1024 },
+    { width: 1280, height: 720 },
+    { width: 1440, height: 1000 },
+  ];
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const desktopLauncher = page.getByRole("button", { name: "Open Tutorial" });
+    if (await desktopLauncher.isVisible()) {
+      await desktopLauncher.click();
+    } else {
+      await page.getByRole("button", { name: "Open activity" }).click();
+      await page.getByRole("tab", { name: "Settings" }).click();
+      await page.getByRole("button", { name: "Show Tutorial" }).click();
+    }
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const box = await dialog.boundingBox();
+    expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(
+      viewport.width,
+    );
+    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(
+      viewport.height,
+    );
+    await page.keyboard.press("Escape");
+  }
+});
+
+test("tutorial leaves editable settings controls usable", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Open Tutorial" }).click();
+  await page.getByRole("button", { name: "Go to tutorial step 5" }).click();
+
+  const settingsSelect = page.getByRole("combobox");
+  await settingsSelect.focus();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("dialog", { name: "Tune the experience" }),
+  ).toBeVisible();
+
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("dialog")).toBeHidden();
+});
+
+test("rendered controls avoid blue-family decorative utility colors", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Open Tutorial" }).click();
+
+  const forbiddenClasses = await page.evaluate(() => {
+    const blueUtility =
+      /^(?:hover:|focus-visible:|group-hover:)?(?:bg|text|border|ring|outline|from|via|to)-(?:sky|blue|cyan|indigo|teal)-/;
+    return Array.from(document.querySelectorAll("[class]"))
+      .flatMap((element) => (element.getAttribute("class") ?? "").split(/\s+/))
+      .filter((className) => blueUtility.test(className));
+  });
+
+  expect(forbiddenClasses).toEqual([]);
 });
