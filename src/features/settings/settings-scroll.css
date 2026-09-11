@@ -1,0 +1,85 @@
+.settings-panel-shell {
+  --settings-fade-color: rgba(7, 9, 13, 0.98);
+}
+
+.settings-panel-shell.settings-panel-light {
+  --settings-fade-color: rgba(255, 255, 255, 0.98);
+}
+
+.settings-scroll-frame::before,
+.settings-scroll-frame::after {
+  position: absolute;
+  right: 0.75rem;
+  left: 0;
+  z-index: 2;
+  height: 1.25rem;
+  pointer-events: none;
+  content: "";
+}
+
+.settings-scroll-frame::before {
+  top: 0;
+  background: linear-gradient(
+    to bottom,
+    var(--settings-fade-color),
+    transparent
+  );
+}
+
+.settings-scroll-frame::after {
+  bottom: 0;
+  background: linear-gradient(
+    to top,
+    var(--settings-fade-color),
+    transparent
+  );
+}
+
+.settings-scroll-area {
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.settings-panel-light .settings-scroll-area {
+  scrollbar-color: rgba(15, 23, 42, 0.25) transparent;
+}
+
+.settings-scroll-area::-webkit-scrollbar {
+  width: 10px;
+}
+
+.settings-scroll-area::-webkit-scrollbar-track {
+  margin-block: 12px;
+  background: transparent;
+}
+
+.settings-scroll-area::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
+  transition: background-color 180ms ease;
+}
+
+.settings-panel-light .settings-scroll-area::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.25);
+}
+
+.settings-scroll-area:hover::-webkit-scrollbar-thumb,
+.settings-scroll-area:focus-visible::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.44);
+}
+
+.settings-panel-light .settings-scroll-area:hover::-webkit-scrollbar-thumb,
+.settings-panel-light .settings-scroll-area:focus-visible::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.48);
+}
+
+.settings-scroll-area::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}

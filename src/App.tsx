@@ -5,12 +5,12 @@
   useRef,
   useState,
   type CSSProperties,
-  type ComponentType,
 } from "react";
 import { createPortal } from "react-dom";
 import {
   Camera,
   VideoOff,
+  Settings,
   Settings2,
   Activity,
   AlertCircle,
@@ -28,13 +28,21 @@ import {
   BookOpen,
   ShieldCheck,
 } from "lucide-react";
-import {
-  FilesetResolver,
+import type {
   FaceLandmarker,
-  type FaceLandmarkerResult,
+  FaceLandmarkerResult,
   PoseLandmarker,
-  type PoseLandmarkerResult,
+  PoseLandmarkerResult,
 } from "@mediapipe/tasks-vision";
+import { MetricCard } from "./components/MetricCard";
+import {
+  average as avg,
+  clamp,
+  metricQuality,
+  stabilityFromVariance,
+  variance,
+} from "./features/posture/math";
+import "./features/settings/settings-scroll.css";
 
 const IDX = {
   NOSE: 0,
@@ -108,6 +116,7 @@ type CameraDevice = {
   label: string;
 };
 type SpeechStatus = "unsupported" | "blocked" | "ready" | "loading";
+type MlStatus = "checking" | "connected" | "degraded" | "unavailable";
 type TutorialTarget =
   | "start-session"
   | "camera-stage"
@@ -160,7 +169,7 @@ type DocumentPictureInPictureApi = {
 };
 
 const AUTO_PIP_ACTION = "enterpictureinpicture" as MediaSessionAction;
-const WINDOW = 12;
+const WINDOW = 30;
 const EMA_ALPHA = 0.25;
 const VIS_THRESHOLD = 0.35;
 const DRAW_VIS_THRESHOLD = 0.12;
@@ -186,6 +195,7 @@ const UPPER_FRONT_TRACKING_MIN = 62;
 const UPPER_FRONT_FRAME_MARGIN = 0.08;
 const UPPER_FRONT_SCORE_CAP = 86;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
+const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
 const DEFAULT_SENSITIVITY: Sensitivity = {
   trunkAngle: 18,
   headDistance: 0.1,
@@ -236,27 +246,6 @@ const TUTORIAL_STEPS: TutorialStep[] = [
 ];
 
 type SideKind = "left" | "right";
-
-function clamp(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n));
-}
-
-function avg(arr: number[]) {
-  if (arr.length === 0) return null;
-  return arr.reduce((s, x) => s + x, 0) / arr.length;
-}
-
-function variance(arr: number[]) {
-  if (arr.length < 2) return 0;
-  const mean = avg(arr) ?? 0;
-  const sq = arr.reduce((s, x) => s + (x - mean) * (x - mean), 0);
-  return sq / arr.length;
-}
-
-function stabilityFromVariance(trunkVar: number) {
-  // Lower variance means steadier posture over the sequence window.
-  return Math.round(clamp(100 - trunkVar * 35, 0, 100));
-}
 
 function pushLimited(arr: number[], x: number) {
   arr.push(x);
@@ -394,12 +383,6 @@ function dominantSideFromNorm(
     norm[IDX.R_EYE],
   ]);
   return lScore >= rScore ? "left" : "right";
-}
-
-function metricQuality(value: number, threshold: number) {
-  if (threshold <= 0) return 0;
-  const ratio = value / threshold;
-  return Math.round(clamp(100 - (ratio - 1) * 70, 0, 100));
 }
 
 function detectOrientation(
@@ -694,8 +677,11 @@ export default function App() {
 
   const [isActive, setIsActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showSessionLog, setShowSessionLog] = useState(true);
-  const [showTutorial, setShowTutorial] = useState(true);
+  const [showSessionLog, setShowSessionLog] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(TUTORIAL_SEEN_STORAGE_KEY) !== "true";
+  });
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [tutorialTargetRect, setTutorialTargetRect] =
     useState<TutorialRect | null>(null);
@@ -704,7 +690,9 @@ export default function App() {
   const [autoPipStatus, setAutoPipStatus] =
     useState<AutoPipStatus>("unsupported");
   const [isPageFocused, setIsPageFocused] = useState(() =>
-    typeof document === "undefined" ? true : document.hasFocus() && !document.hidden,
+    typeof document === "undefined"
+      ? true
+      : document.hasFocus() && !document.hidden,
   );
   const [pill, setPill] = useState<Pill>("idle");
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -743,14 +731,11 @@ export default function App() {
   const [sensitivity] = useState<Sensitivity>(DEFAULT_SENSITIVITY);
   const [stabilityScore, setStabilityScore] = useState(0);
   const [trackingHealth, setTrackingHealth] = useState(0);
+  const [mlStatus, setMlStatus] = useState<MlStatus>("checking");
   const overlayDetail = "detailed" as const;
 
   const modelPath = useMemo(() => "/models/pose_landmarker_lite.task", []);
-  const faceModelPath = useMemo(
-    () =>
-      "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-    [],
-  );
+  const faceModelPath = useMemo(() => "/models/face_landmarker.task", []);
   const mlApiUrl = useMemo(
     () => (import.meta.env.VITE_ML_API_URL as string | undefined)?.trim() ?? "",
     [],
@@ -836,8 +821,11 @@ export default function App() {
     loadedFaceModelPathRef.current = null;
 
     landmarkerLoadPromiseRef.current = (async () => {
+      const { FaceLandmarker, FilesetResolver, PoseLandmarker } = await import(
+        "@mediapipe/tasks-vision"
+      );
       const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm",
+        "/mediapipe/wasm",
       );
 
       poseRef.current = await PoseLandmarker.createFromOptions(vision, {
@@ -1079,7 +1067,11 @@ export default function App() {
       torso_outline_angle: number;
       silhouette_stability: number;
     }): Promise<MlPrediction | null> => {
-      if (!mlApiUrl || inferInFlightRef.current) return null;
+      if (!mlApiUrl) {
+        setMlStatus("unavailable");
+        return null;
+      }
+      if (inferInFlightRef.current) return null;
 
       const now = Date.now();
       if (now - lastInferTsRef.current < 800) return null;
@@ -1093,10 +1085,15 @@ export default function App() {
           body: JSON.stringify(payload),
         });
 
-        if (!res.ok) return null;
+        if (!res.ok) {
+          setMlStatus("degraded");
+          return null;
+        }
         const data = (await res.json()) as MlPrediction;
+        setMlStatus("connected");
         return data;
       } catch {
+        setMlStatus("unavailable");
         return null;
       } finally {
         inferInFlightRef.current = false;
@@ -1599,10 +1596,9 @@ export default function App() {
       const chinLiftProxy = chinPoint
         ? Math.max(0, (chinPoint.y - noseN.y) / shoulderWidth)
         : 0;
-      const upperBackwardLean = Math.max(
-        0,
-        chinLiftProxy - CHIN_LIFT_PROXY_NEUTRAL,
-      ) * CHIN_LIFT_PROXY_TO_HEAD_LEAN_SCALE;
+      const upperBackwardLean =
+        Math.max(0, chinLiftProxy - CHIN_LIFT_PROXY_NEUTRAL) *
+        CHIN_LIFT_PROXY_TO_HEAD_LEAN_SCALE;
       const mouthLineTilt =
         faceLandmarks?.[FACE_IDX.L_MOUTH] && faceLandmarks?.[FACE_IDX.R_MOUTH]
           ? Math.abs(
@@ -1749,7 +1745,11 @@ export default function App() {
           shoulder: sM,
         });
 
-      const dBase = computeDecision(captureTier, effectiveSensitivity, baseline);
+      const dBase = computeDecision(
+        captureTier,
+        effectiveSensitivity,
+        baseline,
+      );
       const lookUpDetected = chinLiftProxy >= CHIN_LIFT_PROXY_THRESHOLD;
       const severeLookUp = chinLiftProxy >= CHIN_LIFT_PROXY_SEVERE;
       const d = lookUpDetected
@@ -2179,7 +2179,10 @@ export default function App() {
     try {
       navigator.mediaSession.setCameraActive(isActive);
     } catch (error) {
-      console.warn("Unable to update camera activity for media session:", error);
+      console.warn(
+        "Unable to update camera activity for media session:",
+        error,
+      );
     }
 
     return () => {
@@ -2195,12 +2198,10 @@ export default function App() {
     const supportsFloatingWindow =
       typeof window !== "undefined" &&
       !!(
-        (
-          window as Window & {
-            documentPictureInPicture?: DocumentPictureInPictureApi;
-          }
-        ).documentPictureInPicture?.requestWindow
-      );
+        window as Window & {
+          documentPictureInPicture?: DocumentPictureInPictureApi;
+        }
+      ).documentPictureInPicture?.requestWindow;
 
     if (
       typeof window === "undefined" ||
@@ -2236,12 +2237,10 @@ export default function App() {
     const supportsFloatingWindow =
       typeof window !== "undefined" &&
       !!(
-        (
-          window as Window & {
-            documentPictureInPicture?: DocumentPictureInPictureApi;
-          }
-        ).documentPictureInPicture?.requestWindow
-      );
+        window as Window & {
+          documentPictureInPicture?: DocumentPictureInPictureApi;
+        }
+      ).documentPictureInPicture?.requestWindow;
 
     if (typeof window === "undefined" || !supportsFloatingWindow || !isActive) {
       if (autoFloatingWindowRef.current && !floatingWindowEnabled) {
@@ -2283,7 +2282,45 @@ export default function App() {
       window.removeEventListener("focus", syncFloatingWindowWithFocus);
       window.removeEventListener("blur", syncFloatingWindowWithFocus);
     };
-  }, [closeFloatingWindow, floatingWindowEnabled, isActive, openFloatingWindow]);
+  }, [
+    closeFloatingWindow,
+    floatingWindowEnabled,
+    isActive,
+    openFloatingWindow,
+  ]);
+
+  useEffect(() => {
+    if (!mlApiUrl) {
+      setMlStatus("unavailable");
+      return;
+    }
+
+    const controller = new AbortController();
+    setMlStatus("checking");
+    void fetch(`${mlApiUrl.replace(/\/$/, "")}/health`, {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        setMlStatus(response.ok ? "connected" : "degraded");
+      })
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setMlStatus("unavailable");
+        }
+      });
+
+    return () => controller.abort();
+  }, [mlApiUrl]);
+
+  useEffect(() => {
+    if (
+      isActive &&
+      typeof window !== "undefined" &&
+      window.matchMedia("(min-width: 1024px)").matches
+    ) {
+      setShowSessionLog(true);
+    }
+  }, [isActive]);
 
   useEffect(() => {
     void refreshCameraDevices();
@@ -2336,12 +2373,6 @@ export default function App() {
       );
     };
   }, [refreshSpeechSupport]);
-
-  useEffect(() => {
-    void ensureLandmarker().catch((error) => {
-      console.error("Pose preload failed:", error);
-    });
-  }, [ensureLandmarker]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -2414,6 +2445,7 @@ export default function App() {
   }, [currentTutorialStep.target, showSettings, showSessionLog, showTutorial]);
 
   const closeTutorial = () => {
+    window.localStorage.setItem(TUTORIAL_SEEN_STORAGE_KEY, "true");
     setShowTutorial(false);
   };
 
@@ -2421,6 +2453,18 @@ export default function App() {
     setTutorialStepIndex(0);
     setShowTutorial(true);
   };
+
+  useEffect(() => {
+    const closeTransientPanels = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (showTutorial) closeTutorial();
+      else if (showSettings) setShowSettings(false);
+      else if (showSessionLog) setShowSessionLog(false);
+    };
+
+    window.addEventListener("keydown", closeTransientPanels);
+    return () => window.removeEventListener("keydown", closeTransientPanels);
+  }, [showSessionLog, showSettings, showTutorial]);
 
   const goToNextTutorialStep = () => {
     if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
@@ -2483,7 +2527,7 @@ export default function App() {
     ? "bg-black/30 backdrop-blur-md border-white/10"
     : "bg-white/92 backdrop-blur-md border-slate-200";
   const subtleTextClass = isDarkTheme ? "text-white/60" : "text-slate-500";
-  const mutedTextClass = isDarkTheme ? "text-white/40" : "text-slate-500";
+  const mutedTextClass = isDarkTheme ? "text-white/60" : "text-slate-500";
   const quietTextClass = isDarkTheme ? "text-white/70" : "text-slate-600";
   const iconButtonClass = isDarkTheme
     ? "border-white/30 bg-white/10 text-white/80 hover:bg-white hover:text-black"
@@ -2494,9 +2538,7 @@ export default function App() {
   const primaryButtonClass = isDarkTheme
     ? "bg-white text-black hover:bg-slate-200 shadow-lg"
     : "bg-slate-900 text-white hover:bg-slate-700 shadow-lg";
-  const tutorialOverlayClass = isDarkTheme
-    ? "bg-black/78"
-    : "bg-slate-100/80";
+  const tutorialOverlayClass = isDarkTheme ? "bg-black/78" : "bg-slate-100/80";
   const themeVars: CSSProperties = {
     color: isDarkTheme ? "#e5edf7" : "#0f172a",
   };
@@ -2506,9 +2548,10 @@ export default function App() {
       window as Window & {
         documentPictureInPicture?: DocumentPictureInPictureApi;
       }
-        ).documentPictureInPicture?.requestWindow;
+    ).documentPictureInPicture?.requestWindow;
 
-  const metricsPaused = !isActive || pill === "detecting" || trackingHealth < 45;
+  const metricsPaused =
+    !isActive || pill === "detecting" || trackingHealth < 45;
 
   const autoPipStatusLabel =
     autoPipStatus === "supported"
@@ -2518,6 +2561,22 @@ export default function App() {
         : autoPipStatus === "blocked"
           ? "Auto PiP blocked"
           : "Unsupported";
+  const mlStatusLabel =
+    mlStatus === "connected"
+      ? "ML connected"
+      : mlStatus === "checking"
+        ? "Checking ML"
+        : mlStatus === "degraded"
+          ? "ML degraded"
+          : "ML unavailable";
+  const mlStatusClass =
+    mlStatus === "connected"
+      ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-300"
+      : mlStatus === "checking"
+        ? "border-sky-400/25 bg-sky-400/10 text-sky-300"
+        : mlStatus === "degraded"
+          ? "border-amber-400/25 bg-amber-400/10 text-amber-300"
+          : "border-rose-400/25 bg-rose-400/10 text-rose-300";
   const autoPipStatusMessage =
     autoPipStatus === "supported"
       ? "This browser can auto-open the floating window during an active session when the tab or window moves out of focus."
@@ -2548,7 +2607,8 @@ export default function App() {
             tutorialTargetRect.right + gap + tutorialCardWidth <=
             viewportWidth - viewportPadding;
           const fitsLeft =
-            tutorialTargetRect.left - gap - tutorialCardWidth >= viewportPadding;
+            tutorialTargetRect.left - gap - tutorialCardWidth >=
+            viewportPadding;
           const fitsBelow =
             tutorialTargetRect.bottom + gap + cardHeight <=
             viewportHeight - viewportPadding;
@@ -2606,15 +2666,19 @@ export default function App() {
               : Math.max(16, window.innerHeight / 2 - 150),
         };
   const visibleFeedbacks = feedbacks.slice(-5).reverse();
+  const isSessionLogIdle = !isActive && feedbacks.length === 0;
 
   return (
-    <div
-      className={`min-h-screen font-sans p-4 md:p-8 flex items-center justify-center transition-colors duration-300 ${shellClass}`}
+    <main
+      className={`min-h-dvh w-full max-w-full overflow-x-hidden px-3 py-3 font-sans transition-colors duration-300 sm:p-4 lg:flex lg:items-center lg:justify-center lg:p-8 ${shellClass}`}
       style={themeVars}
     >
-      <div className="w-full flex flex-col gap-6 h-full lg:h-[85vh]">
-        <div className="flex-1 flex min-h-0 gap-4 lg:gap-6">
-          <div className="hidden lg:flex h-full min-h-0 w-60 xl:w-64 flex-shrink-0 flex-col gap-4">
+      <div className="flex min-h-[calc(100dvh-1.5rem)] w-full flex-col gap-4 sm:min-h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-4rem)] lg:max-h-[56rem] lg:min-h-0 lg:gap-6">
+        <div className="flex flex-none min-h-0 gap-4 lg:flex-1 lg:gap-6">
+          <aside
+            data-testid="desktop-rail"
+            className="uprightly-desktop-rail hidden h-full min-h-0 w-60 flex-shrink-0 flex-col gap-4 overflow-hidden lg:flex xl:w-64"
+          >
             <div className="items-center text-center flex flex-col gap-2">
               <h1
                 className={`text-5xl font-bold tracking-tight bg-clip-text text-transparent ${
@@ -2650,7 +2714,7 @@ export default function App() {
               Open Tutorial
             </button>
 
-            <div className="mt-auto flex flex-col gap-4">
+            <div className="uprightly-desktop-metrics mt-auto flex min-h-0 flex-col gap-4">
               <div
                 data-tour="posture-score"
                 className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
@@ -2761,14 +2825,14 @@ export default function App() {
                 )}
               />
             </div>
-          </div>
+          </aside>
 
           <div
             className={`flex-1 min-w-0 flex min-h-0 transition-[gap] duration-200 ease-in-out ${showSettings ? "gap-6" : "gap-0"}`}
           >
             <div
               data-tour="camera-stage"
-              className={`relative flex-1 rounded-[2rem] overflow-hidden border shadow-2xl group transition-colors duration-300 ${stageClass}`}
+              className={`group relative aspect-[4/5] min-h-[30rem] flex-1 overflow-hidden rounded-[2rem] border shadow-2xl transition-colors duration-300 motion-reduce:transition-none lg:aspect-auto lg:min-h-0 ${stageClass}`}
             >
               <video
                 ref={videoRef}
@@ -2803,13 +2867,22 @@ export default function App() {
               ) : null}
 
               <div
-                className={`absolute top-4 left-4 right-4 z-20 lg:hidden rounded-2xl px-4 py-3 flex items-center justify-end gap-3 border ${stageGlassClass}`}
+                className={`absolute left-3 right-3 top-3 z-20 flex min-h-14 items-center justify-end gap-2 rounded-2xl border px-2.5 py-2 lg:hidden ${stageGlassClass}`}
               >
-                <div className="flex gap-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowSessionLog(true)}
+                    className={`flex h-11 w-11 items-center justify-center rounded-full border transition-all ${iconButtonClass}`}
+                    title="Open Session Log"
+                    aria-label="Open Session Log"
+                  >
+                    <Bell size={18} />
+                  </button>
                   <button
                     onClick={() => setShowSettings((v) => !v)}
-                    className={`flex items-center justify-center p-2.5 rounded-full transition-all border ${iconButtonClass}`}
+                    className={`flex h-11 w-11 items-center justify-center rounded-full border transition-all ${iconButtonClass}`}
                     title="Toggle Settings"
+                    aria-label="Toggle Settings"
                   >
                     <Settings2 size={18} />
                   </button>
@@ -2817,7 +2890,7 @@ export default function App() {
                     onClick={isActive ? stop : () => void start()}
                     disabled={isLoading}
                     data-tour="start-session"
-                    className={`lg:hidden flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold transition-all ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                    className={`flex min-h-11 items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all lg:hidden ${isActive ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30" : primaryButtonClass} ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     {isActive ? <VideoOff size={18} /> : <Camera size={18} />}
                     {isActive ? "Stop" : "Start Session"}
@@ -2849,80 +2922,143 @@ export default function App() {
               </div>
 
               <div
+                className={`absolute bottom-20 left-5 z-20 rounded-full border px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] backdrop-blur-md ${mlStatusClass} ${isActive ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"} transition-all motion-reduce:transition-none`}
+                role="status"
+                aria-live="polite"
+              >
+                {mlStatusLabel}
+              </div>
+
+              <div
                 data-tour="session-log"
-                className={`absolute right-0 top-0 bottom-0 z-30 transition-all duration-300 ease-out ${showSessionLog ? "w-72 lg:w-80" : "w-16"}`}
+                className={`z-40 transition-all duration-300 ease-out motion-reduce:transition-none ${
+                  showSessionLog
+                    ? `fixed inset-x-3 bottom-3 lg:absolute lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[22rem] ${
+                        isSessionLogIdle
+                          ? "h-[min(42dvh,22rem)]"
+                          : "h-[min(60dvh,32rem)]"
+                      }`
+                    : "pointer-events-none absolute right-0 top-0 h-16 w-16 lg:bottom-0 lg:h-auto"
+                }`}
               >
                 {showSessionLog ? (
-                  <div className="relative h-full">
+                  <section
+                    className={`relative h-full overflow-hidden rounded-[1.75rem] border shadow-2xl backdrop-blur-2xl ${
+                      isDarkTheme
+                        ? "border-white/10 bg-[#07090d]/95"
+                        : "border-slate-200 bg-white/95"
+                    }`}
+                    aria-label="Session Log"
+                  >
                     <div
-                      className="absolute inset-y-0 right-0 w-[38rem] pointer-events-none"
+                      className="pointer-events-none absolute inset-0"
                       style={{
-                        background:
-                          isDarkTheme
-                            ? "linear-gradient(to left, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.32) 16%, rgba(255,255,255,0.24) 30%, rgba(255,255,255,0.16) 46%, rgba(255,255,255,0.1) 62%, rgba(255,255,255,0.05) 78%, rgba(255,255,255,0.02) 90%, rgba(255,255,255,0) 100%)"
-                            : "linear-gradient(to left, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.88) 16%, rgba(0,0,0,0.78) 30%, rgba(0,0,0,0.64) 46%, rgba(0,0,0,0.46) 62%, rgba(0,0,0,0.26) 78%, rgba(0,0,0,0.1) 90%, rgba(0,0,0,0) 100%)",
+                        background: isDarkTheme
+                          ? "radial-gradient(circle at 100% 0%, rgba(56,189,248,0.1), transparent 34%)"
+                          : "radial-gradient(circle at 100% 0%, rgba(14,165,233,0.08), transparent 34%)",
                       }}
                     />
-                    <div
-                      className={`absolute inset-y-0 right-0 w-full ${
-                        isDarkTheme
-                          ? "bg-gradient-to-l from-white/88 via-white/42 via-45% to-transparent"
-                          : "bg-gradient-to-l from-black/78 via-black/42 via-45% to-transparent"
-                      }`}
-                    />
-                    <div className="absolute top-4 right-4 left-12 z-10 pointer-events-none">
-                      <div className="ml-auto flex w-full max-w-[22.5rem] items-center justify-between gap-2 pointer-events-auto">
-                        <div
-                          className={`flex flex-shrink-0 items-center gap-2 rounded-full border px-3 py-2 ${isDarkTheme ? "border-white/10 bg-black/30 text-white/80" : "border-slate-200 bg-white/75 text-slate-700"} backdrop-blur-md`}
-                        >
-                          <Bell size={14} />
-                          <span className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.22em]">
-                            Session Log
-                          </span>
+                    <div className="pointer-events-none absolute left-4 right-4 top-4 z-10">
+                      <div className="pointer-events-auto ml-auto flex w-full items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div
+                            className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border ${
+                              isDarkTheme
+                                ? "border-white/10 bg-black/30 text-white/75"
+                                : "border-slate-200 bg-white/75 text-slate-700"
+                            } backdrop-blur-md`}
+                          >
+                            <Bell size={16} aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0">
+                            <h2 className="truncate text-[11px] font-bold uppercase tracking-[0.2em]">
+                              Session Log
+                            </h2>
+                            <p
+                              className={`mt-0.5 truncate text-[11px] ${
+                                isDarkTheme ? "text-white/45" : "text-slate-500"
+                              }`}
+                              aria-live="polite"
+                            >
+                              {isSessionLogIdle
+                                ? "Standby"
+                                : `${feedbacks.length} ${feedbacks.length === 1 ? "event" : "events"}`}
+                            </p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => setShowSettings((v) => !v)}
-                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
-                            title="Toggle Settings"
+                            className={`flex h-11 w-11 items-center justify-center rounded-full border backdrop-blur-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${sessionLogIconButtonClass}`}
+                            title="Open Settings"
+                            aria-label="Open Settings"
                           >
-                            <Settings2 size={16} />
+                            <Settings size={18} aria-hidden="true" />
                           </button>
                           <button
                             onClick={() => setShowSessionLog(false)}
-                            className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
+                            className={`flex h-11 w-11 items-center justify-center rounded-full border backdrop-blur-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${sessionLogIconButtonClass}`}
                             title="Hide Session Log"
                             aria-label="Hide Session Log"
                           >
-                            <PanelRightClose size={16} />
+                            <PanelRightClose size={18} aria-hidden="true" />
                           </button>
                         </div>
                       </div>
                     </div>
 
                     <div
-                      className="absolute top-20 bottom-4 right-4 left-12 z-10 flex items-end justify-end pointer-events-none"
-                      style={{
-                        maskImage:
-                          "linear-gradient(to top, black 0%, black 58%, rgba(0,0,0,0.78) 72%, rgba(0,0,0,0.28) 84%, transparent 100%)",
-                        WebkitMaskImage:
-                          "linear-gradient(to top, black 0%, black 58%, rgba(0,0,0,0.78) 72%, rgba(0,0,0,0.28) 84%, transparent 100%)",
-                      }}
+                      className={`absolute bottom-4 left-4 right-4 top-20 z-10 flex ${
+                        isSessionLogIdle
+                          ? "items-center justify-center"
+                          : "pointer-events-none items-end justify-end"
+                      }`}
+                      style={
+                        isSessionLogIdle
+                          ? undefined
+                          : {
+                              maskImage:
+                                "linear-gradient(to top, black 0%, black 58%, rgba(0,0,0,0.78) 72%, rgba(0,0,0,0.28) 84%, transparent 100%)",
+                              WebkitMaskImage:
+                                "linear-gradient(to top, black 0%, black 58%, rgba(0,0,0,0.78) 72%, rgba(0,0,0,0.28) 84%, transparent 100%)",
+                            }
+                      }
                     >
-                      {!isActive && feedbacks.length === 0 ? (
+                      {isSessionLogIdle ? (
                         <div
-                          className={`max-w-[17rem] rounded-2xl border px-4 py-3 ${
-                            isDarkTheme
-                              ? "border-white/10 bg-[#05060a] text-white/78"
-                              : "border-slate-300 bg-white text-slate-700 shadow-[0_18px_45px_-30px_rgba(15,23,42,0.24)]"
-                          }`}
+                          className="flex w-full max-w-[18rem] flex-col items-center px-3 pb-1 pt-2 text-center"
                         >
-                          <div className="text-[11px] font-bold uppercase tracking-[0.22em] opacity-75">
-                            Standby
+                          <div
+                            className={`relative flex h-14 w-14 items-center justify-center rounded-full border ${
+                              isDarkTheme
+                                ? "border-sky-400/20 bg-sky-400/[0.07] text-sky-300"
+                                : "border-sky-200 bg-sky-50 text-sky-600"
+                            }`}
+                            aria-hidden="true"
+                          >
+                            <span className="absolute inset-1 rounded-full border border-current opacity-20 motion-safe:animate-pulse" />
+                            <Activity size={22} />
                           </div>
-                          <div className="mt-1 text-sm leading-relaxed">
-                            Start a session to see live posture feedback here.
-                          </div>
+                          <h3 className="mt-3 text-base font-semibold">
+                            Ready when you are
+                          </h3>
+                          <p
+                            className={`mt-1 max-w-[15rem] text-sm leading-relaxed ${
+                              isDarkTheme ? "text-white/55" : "text-slate-500"
+                            }`}
+                          >
+                            Start monitoring to receive live posture feedback.
+                          </p>
+                          <button
+                            onClick={() => void start()}
+                            disabled={isLoading}
+                            className={`mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${primaryButtonClass} ${
+                              isLoading ? "cursor-not-allowed opacity-50" : ""
+                            }`}
+                          >
+                            <Camera size={17} aria-hidden="true" />
+                            {isLoading ? "Preparing Camera" : "Start Session"}
+                          </button>
                         </div>
                       ) : (
                         <div className="w-full max-w-[22.5rem] flex flex-col-reverse gap-3">
@@ -3020,10 +3156,9 @@ export default function App() {
                         </div>
                       )}
                     </div>
-
-                  </div>
+                  </section>
                 ) : (
-                  <div className="absolute top-4 right-4 z-10 flex flex-col items-center gap-3 pointer-events-auto">
+                  <div className="pointer-events-auto absolute right-4 top-4 z-10 hidden flex-col items-center gap-3 lg:flex">
                     <button
                       onClick={() => setShowSessionLog(true)}
                       className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
@@ -3036,6 +3171,7 @@ export default function App() {
                       onClick={() => setShowSettings((v) => !v)}
                       className={`flex items-center justify-center p-2.5 rounded-full transition-all border backdrop-blur-md ${sessionLogIconButtonClass}`}
                       title="Toggle Settings"
+                      aria-label="Toggle Settings"
                     >
                       <Settings2 size={16} />
                     </button>
@@ -3045,14 +3181,20 @@ export default function App() {
             </div>
 
             <div
-              className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out ${showSettings ? "w-80 opacity-100" : "w-0 opacity-0"}`}
+              className={`flex-shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${
+                showSettings
+                  ? "fixed inset-0 z-50 w-full bg-black/55 p-3 opacity-100 lg:static lg:w-80 lg:bg-transparent lg:p-0"
+                  : "hidden w-0 opacity-0 lg:block"
+              }`}
+              inert={!showSettings}
+              style={!showSettings ? { display: "none" } : undefined}
             >
               <div
                 aria-hidden={!showSettings}
                 data-tour="settings-panel"
-                className={`w-80 h-full rounded-[2rem] p-6 flex flex-col overflow-y-auto transition-transform duration-200 ease-in-out border ${showSettings ? "translate-x-0 pointer-events-auto" : "translate-x-3 pointer-events-none"} ${settingsPanelClass}`}
+                className={`settings-panel-shell ${isDarkTheme ? "settings-panel-dark" : "settings-panel-light"} pointer-events-auto flex h-full w-full flex-col overflow-hidden rounded-[1.75rem] border transition-transform duration-200 ease-in-out motion-reduce:transition-none lg:w-80 lg:rounded-[2rem] ${showSettings ? "translate-x-0" : "translate-x-3"} ${settingsPanelClass}`}
               >
-                <div className="flex items-center justify-between mb-8">
+                <div className="flex flex-shrink-0 items-center justify-between px-6 pb-4 pt-6">
                   <div className="flex items-center gap-2">
                     <Settings2
                       size={18}
@@ -3066,7 +3208,7 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => setShowSettings(false)}
-                    className={`w-9 h-9 rounded-lg transition-colors flex items-center justify-center ${isDarkTheme ? "text-white/70 hover:text-white hover:bg-white/10" : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"}`}
+                    className={`flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${isDarkTheme ? "text-white/70 hover:text-white hover:bg-white/10" : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"}`}
                     title="Close settings"
                     aria-label="Close settings"
                   >
@@ -3074,7 +3216,15 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="space-y-8">
+                <div className="settings-scroll-frame relative min-h-0 flex-1">
+                  <div
+                    data-testid="settings-scroll-area"
+                    className="settings-scroll-area h-full overflow-y-auto px-6 pb-6 pt-4"
+                    role="region"
+                    aria-label="Settings controls"
+                    tabIndex={0}
+                  >
+                    <div className="space-y-8">
                   <div className="space-y-3">
                     <div className="flex justify-between items-center px-1">
                       <label
@@ -3315,18 +3465,20 @@ export default function App() {
                       </p>
                     ) : null}
                   </div>
-                </div>
+                    </div>
 
-                <div className="mt-auto pt-6">
-                  <div
-                    className={`p-4 rounded-2xl border ${isDarkTheme ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"}`}
-                  >
-                    <p
-                      className={`text-[10px] leading-relaxed italic ${mutedTextClass}`}
-                    >
-                      Settings now focus on the essentials: camera source, dark
-                      or light mode, audio feedback, and voice testing.
-                    </p>
+                    <div className="mt-8">
+                      <div
+                        className={`p-4 rounded-2xl border ${isDarkTheme ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"}`}
+                      >
+                        <p
+                          className={`text-[10px] leading-relaxed italic ${mutedTextClass}`}
+                        >
+                          Settings now focus on the essentials: camera source,
+                          dark or light mode, audio feedback, and voice testing.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3334,7 +3486,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:hidden gap-4 flex-shrink-0">
+        <div className="grid flex-shrink-0 grid-flow-dense grid-cols-2 gap-3 lg:hidden">
           <div
             data-tour="posture-score"
             className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
@@ -3549,101 +3701,10 @@ export default function App() {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function MetricCard({
-  paused,
-  theme,
-  label,
-  value,
-  unit,
-  icon: Icon,
-  variant,
-  rawValue,
-  signedValue,
-  threshold,
-  progress: _progress,
-  colorClass,
-}: {
-  paused: boolean;
-  theme: ThemeMode;
-  label: string;
-  value: string;
-  unit: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
-  variant: "trunk" | "head" | "shoulder";
-  rawValue: number;
-  signedValue: number;
-  threshold: number;
-  progress: number;
-  colorClass?: string;
-}) {
-  void variant;
-  void rawValue;
-  void signedValue;
-  void threshold;
-  void _progress;
-  const isDarkTheme = theme === "dark";
-
-  return (
-    <div
-      className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${
-        isDarkTheme
-          ? paused
-            ? "bg-gradient-to-br from-white/10 to-transparent border-white/10"
-            : "bg-gradient-to-br from-white/10 via-white/[0.045] to-transparent border-white/10 hover:bg-white/10"
-          : paused
-            ? "bg-gradient-to-br from-white to-slate-50 border-slate-200"
-            : "bg-gradient-to-br from-white to-slate-50 border-slate-200 hover:bg-white"
-      }`}
-    >
-      <div
-        className={`flex items-center justify-between mb-1 z-10 ${
-          paused
-            ? isDarkTheme
-              ? "text-white/35"
-              : "text-slate-400"
-            : isDarkTheme
-              ? "text-white/50"
-              : "text-slate-500"
-        }`}
-      >
-        <span className="text-xs font-medium uppercase tracking-wider">
-          {label}
-        </span>
-        <div className="flex items-center gap-2">
-          <Icon size={14} />
-        </div>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {feedback}. Backend status: {mlStatusLabel}.
       </div>
-      <div className="flex items-baseline gap-1 z-10 mt-0.5">
-        <span
-          className={`text-2xl font-bold tracking-tight ${
-            paused
-              ? isDarkTheme
-                ? "text-white/55"
-                : "text-slate-500"
-              : colorClass || (isDarkTheme ? "text-white" : "text-slate-900")
-          }`}
-        >
-          {value}
-        </span>
-        <span
-          className={`text-xs ${
-            paused
-              ? isDarkTheme
-                ? "text-white/28"
-                : "text-slate-400"
-              : isDarkTheme
-                ? "text-white/40"
-                : "text-slate-500"
-          }`}
-        >
-          {unit}
-        </span>
-      </div>
-    </div>
+    </main>
   );
 }
 
@@ -3990,7 +4051,14 @@ function FloatingStatusPanel({
               }}
             />
 
-            <div style={{ flexShrink: 0, marginTop: 4, position: "relative", zIndex: 1 }}>
+            <div
+              style={{
+                flexShrink: 0,
+                marginTop: 4,
+                position: "relative",
+                zIndex: 1,
+              }}
+            >
               <div
                 style={{
                   alignItems: "center",

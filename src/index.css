@@ -1,15 +1,25 @@
-﻿html,
+@import "tailwindcss" source(none);
+@source "./";
+
+@theme {
+  --font-sans: "Geist Variable", "Segoe UI", sans-serif;
+}
+
+html,
 body,
 #root {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
   margin: 0;
-  overflow: hidden;
 }
 
 body {
   min-width: 320px;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: #0c1118;
+  font-family: "Geist Variable", "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -20,4 +30,40 @@ body {
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (min-width: 1024px) and (max-height: 900px) {
+  .uprightly-desktop-rail,
+  .uprightly-desktop-metrics {
+    gap: 0.75rem;
+  }
+
+  .uprightly-desktop-metrics > * {
+    min-height: 0;
+    padding: 0.75rem;
+  }
 }
