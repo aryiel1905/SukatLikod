@@ -665,7 +665,7 @@ function MobileCompatibilityNotice() {
         aria-describedby="desktop-required-description"
       >
         <p className="text-3xl font-bold tracking-[-0.045em]">Uprightly</p>
-        <div className="mx-auto mt-7 flex h-16 w-16 items-center justify-center rounded-2xl border border-[#d39a38]/30 bg-[#d39a38]/10 text-[#e8bd70]">
+        <div className="mx-auto mt-7 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/25 bg-white/10 text-[#f1f0ec]">
           <Monitor size={28} strokeWidth={1.8} aria-hidden="true" />
         </div>
         <h1
@@ -2954,12 +2954,20 @@ function DesktopApp() {
     ? "border-white/10 bg-black/30 text-white/80 hover:bg-black/45 hover:text-white"
     : "border-stone-200 bg-white/75 text-stone-700 hover:bg-white hover:text-stone-900";
   const primaryButtonClass = isDarkTheme
-    ? "bg-[#d39a38] text-[#171612] hover:bg-[#e1ad52] shadow-lg"
-    : "bg-[#1c1b19] text-[#fffdf8] hover:bg-[#38352f] shadow-lg";
+    ? "bg-[#e8e7e2] text-[#171612] hover:bg-white shadow-lg"
+    : "bg-[#0A3A72] text-white hover:bg-[#082f5d] shadow-lg";
+  const selectedControlClass = isDarkTheme
+    ? "bg-[#e8e7e2] text-[#171612]"
+    : "bg-[#0A3A72] text-white";
+  const accentSoftClass = isDarkTheme
+    ? "border-white/30 bg-white/10 text-[#f1f0ec]"
+    : "border-[#0A3A72]/35 bg-[#0A3A72]/10 text-[#0A3A72]";
+  const accentColor = isDarkTheme ? "#e8e7e2" : "#0A3A72";
   const tutorialOverlayClass = isDarkTheme ? "bg-[#10100f]/82" : "bg-[#f2efe7]/84";
-  const themeVars: CSSProperties = {
+  const themeVars = {
     color: isDarkTheme ? "#f4f0e8" : "#1c1b19",
-  };
+    "--uprightly-accent": accentColor,
+  } as CSSProperties;
   const floatingWindowSupported =
     typeof window !== "undefined" &&
     !!(
@@ -2991,7 +2999,7 @@ function DesktopApp() {
     mlStatus === "connected"
       ? "border-[#91a889]/30 bg-[#91a889]/10 text-[#b6c8ae]"
       : mlStatus === "checking"
-        ? "border-[#d39a38]/30 bg-[#d39a38]/10 text-[#e8bd70]"
+        ? accentSoftClass
         : mlStatus === "degraded"
           ? "border-amber-400/25 bg-amber-400/10 text-amber-300"
           : "border-rose-400/25 bg-rose-400/10 text-rose-300";
@@ -3404,7 +3412,7 @@ function DesktopApp() {
                             type="button"
                             role="tab"
                             aria-selected="true"
-                            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                            className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold ${selectedControlClass}`}
                           >
                             <Bell size={16} aria-hidden="true" />
                             Activity
@@ -3500,7 +3508,7 @@ function DesktopApp() {
                           <button
                             onClick={() => void start()}
                             disabled={isLoading}
-                            className={`mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${primaryButtonClass} ${
+                            className={`mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--uprightly-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${primaryButtonClass} ${
                               isLoading ? "cursor-not-allowed opacity-50" : ""
                             }`}
                           >
@@ -3705,7 +3713,7 @@ function DesktopApp() {
                         type="button"
                         role="tab"
                         aria-selected="true"
-                        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                        className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold ${selectedControlClass}`}
                       >
                         <Settings size={16} aria-hidden="true" />
                         Settings
@@ -3816,9 +3824,7 @@ function DesktopApp() {
                           onClick={() => setTheme(mode)}
                           className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
                             theme === mode
-                              ? isDarkTheme
-                                ? "border-[#d39a38]/55 bg-[#d39a38]/15 text-[#e8bd70]"
-                                : "border-[#d39a38]/45 bg-[#fff5df] text-[#8a5a14]"
+                              ? accentSoftClass
                               : isDarkTheme
                                 ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
                                 : "border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-900"
@@ -3852,19 +3858,21 @@ function DesktopApp() {
                         onClick={() =>
                           setAudioMode(audioMode === "voice" ? "off" : "voice")
                         }
-                        className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors ${
+                        className={`relative h-7 w-12 shrink-0 overflow-hidden rounded-full border transition-colors ${
                           audioMode === "voice"
-                            ? "border-[#d39a38] bg-[#d39a38]"
+                            ? isDarkTheme
+                              ? "border-[#e8e7e2] bg-[#e8e7e2]"
+                              : "border-[#0A3A72] bg-[#0A3A72]"
                             : isDarkTheme
                               ? "border-white/15 bg-white/10"
                               : "border-stone-300 bg-stone-200"
                         }`}
                       >
                         <span
-                          className={`absolute top-1 h-[1.125rem] w-[1.125rem] rounded-full bg-white shadow-sm transition-transform ${
+                          className={`absolute left-1 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 rounded-full shadow-sm transition-transform ${
                             audioMode === "voice"
-                              ? "translate-x-[1.55rem]"
-                              : "translate-x-1"
+                              ? `${isDarkTheme ? "bg-[#171612]" : "bg-white"} translate-x-[1.375rem]`
+                              : "translate-x-0 bg-white"
                           }`}
                         />
                       </button>
@@ -3928,21 +3936,23 @@ function DesktopApp() {
                           setFloatingWindowEnabled((value) => !value)
                         }
                         disabled={!floatingWindowSupported}
-                        className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors ${
+                          className={`relative h-7 w-12 shrink-0 overflow-hidden rounded-full border transition-colors ${
                           !floatingWindowSupported
                             ? "cursor-not-allowed border-stone-300 bg-stone-200 opacity-50"
                             : floatingWindowEnabled
-                              ? "border-[#d39a38] bg-[#d39a38]"
+                              ? isDarkTheme
+                                ? "border-[#e8e7e2] bg-[#e8e7e2]"
+                                : "border-[#0A3A72] bg-[#0A3A72]"
                               : isDarkTheme
                                 ? "border-white/15 bg-white/10"
                                 : "border-stone-300 bg-stone-200"
                         }`}
                       >
                         <span
-                          className={`absolute top-1 h-[1.125rem] w-[1.125rem] rounded-full bg-white shadow-sm transition-transform ${
+                          className={`absolute left-1 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 rounded-full shadow-sm transition-transform ${
                             floatingWindowEnabled
-                              ? "translate-x-[1.55rem]"
-                              : "translate-x-1"
+                              ? `${isDarkTheme ? "bg-[#171612]" : "bg-white"} translate-x-[1.375rem]`
+                              : "translate-x-0 bg-white"
                           }`}
                         />
                       </button>
@@ -4158,7 +4168,7 @@ function DesktopApp() {
             }`}
           >
             <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#d39a38]/35 bg-[#d39a38]/12 text-[#d39a38]">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${accentSoftClass}`}>
                 <Activity size={21} aria-hidden="true" />
               </span>
               <div>
@@ -4242,7 +4252,7 @@ function DesktopApp() {
             }`}
           >
             <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#d39a38]/35 bg-[#d39a38]/12 text-[#d39a38]">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${accentSoftClass}`}>
                 <ShieldCheck size={21} aria-hidden="true" />
               </span>
               <div>
@@ -4306,7 +4316,9 @@ function DesktopApp() {
                 onChange={(event) =>
                   setRememberPrivacyNotice(event.target.checked)
                 }
-                className="mt-0.5 h-4 w-4 shrink-0 accent-[#d39a38]"
+                className={`mt-0.5 h-4 w-4 shrink-0 ${
+                  isDarkTheme ? "accent-[#e8e7e2]" : "accent-[#0A3A72]"
+                }`}
               />
               <span>
                 <span className="font-semibold">Don&apos;t show this message again</span>
@@ -4370,7 +4382,7 @@ function DesktopApp() {
           >
             <div className={`flex shrink-0 items-start justify-between gap-4 border-b px-5 py-5 sm:px-7 ${isDarkTheme ? "border-white/8" : "border-stone-200"}`}>
               <div className="flex items-center gap-3">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#d39a38]/35 bg-[#d39a38]/12 text-[#d39a38]">
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${accentSoftClass}`}>
                   <ShieldCheck size={21} aria-hidden="true" />
                 </span>
                 <div>
@@ -4474,9 +4486,10 @@ function DesktopApp() {
         <div className="pointer-events-none fixed inset-0 z-50">
           {tutorialHighlightStyle ? (
             <div
-              className="fixed rounded-[1.75rem] border-2 border-[#d39a38] transition-all duration-300 motion-reduce:transition-none"
+              className="fixed rounded-[1.75rem] border-2 transition-all duration-300 motion-reduce:transition-none"
               style={{
                 ...tutorialHighlightStyle,
+                borderColor: accentColor,
                 boxShadow: `0 0 0 9999px ${isDarkTheme ? "rgba(16, 16, 15, 0.82)" : "rgba(242, 239, 231, 0.84)"}`,
               }}
               aria-hidden="true"
@@ -4498,8 +4511,12 @@ function DesktopApp() {
             style={tutorialCardStyle}
           >
             <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#d39a38]">
-                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-[#d39a38]/30 bg-[#d39a38]/10">
+              <div
+                className={`flex items-center gap-2 text-sm font-semibold ${
+                  isDarkTheme ? "text-[#e8e7e2]" : "text-[#0A3A72]"
+                }`}
+              >
+                <span className={`flex h-9 w-9 items-center justify-center rounded-full border ${accentSoftClass}`}>
                   <BookOpen size={16} aria-hidden="true" />
                 </span>
                 Quick tour
@@ -4561,7 +4578,9 @@ function DesktopApp() {
                     <span
                       className={`block h-2.5 rounded-full transition-all duration-300 ${
                         index === tutorialStepIndex
-                          ? "w-7 bg-[#d39a38]"
+                          ? isDarkTheme
+                            ? "w-7 bg-[#e8e7e2]"
+                            : "w-7 bg-[#0A3A72]"
                           : isDarkTheme
                             ? "w-2.5 bg-white/25 group-hover:bg-white/45"
                             : "w-2.5 bg-[#c9c2b6] group-hover:bg-[#938b80]"

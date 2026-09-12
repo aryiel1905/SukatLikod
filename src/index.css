@@ -41,7 +41,7 @@ input {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 2px solid #d39a38;
+  outline: 2px solid var(--uprightly-accent, #0a3a72);
   outline-offset: 3px;
 }
 

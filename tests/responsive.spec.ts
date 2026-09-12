@@ -387,20 +387,37 @@ test("tutorial leaves editable settings controls usable", async ({ page }) => {
   await expect(page.getByRole("dialog")).toBeHidden();
 });
 
-test("rendered controls avoid blue-family decorative utility colors", async ({
+test("theme accents use neutral white in dark mode and approved navy in light mode", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Open Tutorial" }).click();
 
-  const forbiddenClasses = await page.evaluate(() => {
-    const blueUtility =
-      /^(?:hover:|focus-visible:|group-hover:)?(?:bg|text|border|ring|outline|from|via|to)-(?:sky|blue|cyan|indigo|teal)-/;
-    return Array.from(document.querySelectorAll("[class]"))
-      .flatMap((element) => (element.getAttribute("class") ?? "").split(/\s+/))
-      .filter((className) => blueUtility.test(className));
-  });
+  const primaryAction = page
+    .getByRole("button", { name: "Start Session" })
+    .first();
+  await expect(primaryAction).toHaveCSS(
+    "background-color",
+    "rgb(232, 231, 226)",
+  );
+  await expect(primaryAction).toHaveCSS("color", "rgb(23, 22, 18)");
 
-  expect(forbiddenClasses).toEqual([]);
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const voiceSwitch = page.getByRole("switch", { name: "Voice prompts" });
+  const [trackBox, thumbBox] = await Promise.all([
+    voiceSwitch.boundingBox(),
+    voiceSwitch.locator("span").boundingBox(),
+  ]);
+  expect(trackBox).not.toBeNull();
+  expect(thumbBox).not.toBeNull();
+  expect(thumbBox?.x ?? 0).toBeGreaterThanOrEqual(trackBox?.x ?? 0);
+  expect((thumbBox?.x ?? 0) + (thumbBox?.width ?? 0)).toBeLessThanOrEqual(
+    (trackBox?.x ?? 0) + (trackBox?.width ?? 0),
+  );
+  await expect(voiceSwitch).toHaveCSS("overflow", "hidden");
+
+  await page.getByRole("button", { name: "Light", exact: true }).click();
+
+  await expect(primaryAction).toHaveCSS("background-color", "rgb(10, 58, 114)");
+  await expect(primaryAction).toHaveCSS("color", "rgb(255, 255, 255)");
 });
