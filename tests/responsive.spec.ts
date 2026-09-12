@@ -1,10 +1,64 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
+test.beforeEach(async ({ page }, testInfo) => {
+  const acknowledgePrivacy = !testInfo.title.startsWith("first visit");
+  await page.addInitScript((shouldAcknowledgePrivacy) => {
     window.localStorage.setItem("uprightly-tutorial-seen", "true");
+    if (shouldAcknowledgePrivacy) {
+      window.localStorage.setItem("uprightly-privacy-notice", "1");
+    } else {
+      window.localStorage.removeItem("uprightly-privacy-notice");
+    }
+  }, acknowledgePrivacy);
+});
+
+test("first visit explains camera privacy and remembers an explicit choice", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const notice = page.getByRole("dialog", {
+    name: "Your camera stays private",
   });
+  await expect(notice).toBeVisible();
+  await expect(
+    notice.getByText("It does not record, upload, or save video clips."),
+  ).toBeVisible();
+  await expect(notice.getByRole("button", { name: "Continue" })).toBeFocused();
+
+  await notice
+    .getByRole("checkbox", { name: "Don't show this message again" })
+    .check();
+  await notice.getByRole("button", { name: "Continue" }).click();
+  await expect(notice).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.localStorage.getItem("uprightly-privacy-notice"),
+      ),
+    )
+    .toBe("1");
+});
+
+test("privacy policy can be revisited from settings", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByRole("button", { name: "View Privacy & Data Use" }).click();
+
+  const policy = page.getByRole("dialog", { name: "Privacy & Data Use" });
+  await expect(policy).toBeVisible();
+  await expect(
+    policy.getByRole("heading", { name: "Video and image handling" }),
+  ).toBeVisible();
+  await expect(
+    policy.getByText("Uprightly does not currently create cookies."),
+  ).toBeVisible();
+
+  await policy.getByRole("button", { name: "Close privacy policy" }).click();
+  await expect(policy).toBeHidden();
 });
 
 test("mobile shows only the computer compatibility notice", async ({

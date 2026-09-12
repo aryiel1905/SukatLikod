@@ -198,6 +198,9 @@ const UPPER_FRONT_FRAME_MARGIN = 0.08;
 const UPPER_FRONT_SCORE_CAP = 86;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
+const PRIVACY_NOTICE_STORAGE_KEY = "uprightly-privacy-notice";
+const PRIVACY_NOTICE_VERSION = "1";
+const PRIVACY_POLICY_UPDATED = "September 12, 2026";
 const DEFAULT_SENSITIVITY: Sensitivity = {
   trunkAngle: 18,
   headDistance: 0.1,
@@ -612,6 +615,14 @@ function getFeedbackPresentation(
 
 const DESKTOP_VIEWPORT_QUERY = "(min-width: 1024px)";
 
+function hasAcknowledgedPrivacyNotice(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.localStorage.getItem(PRIVACY_NOTICE_STORAGE_KEY) ===
+      PRIVACY_NOTICE_VERSION
+  );
+}
+
 function useDesktopViewport() {
   const [isDesktopViewport, setIsDesktopViewport] = useState(() =>
     typeof window === "undefined"
@@ -688,6 +699,9 @@ function DesktopApp() {
   const tutorialCardRef = useRef<HTMLDivElement | null>(null);
   const tutorialContentRef = useRef<HTMLDivElement | null>(null);
   const tutorialReturnFocusRef = useRef<HTMLElement | null>(null);
+  const privacyNoticeRef = useRef<HTMLDivElement | null>(null);
+  const privacyPolicyRef = useRef<HTMLDivElement | null>(null);
+  const privacyReturnFocusRef = useRef<HTMLElement | null>(null);
   const tutorialPanelStateRef = useRef({
     showSettings: false,
     showSessionLog: false,
@@ -766,9 +780,17 @@ function DesktopApp() {
   const [isActive, setIsActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSessionLog, setShowSessionLog] = useState(false);
+  const [showPrivacyNotice, setShowPrivacyNotice] = useState(
+    () => !hasAcknowledgedPrivacyNotice(),
+  );
+  const [rememberPrivacyNotice, setRememberPrivacyNotice] = useState(false);
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showTutorial, setShowTutorial] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(TUTORIAL_SEEN_STORAGE_KEY) !== "true";
+    return (
+      hasAcknowledgedPrivacyNotice() &&
+      window.localStorage.getItem(TUTORIAL_SEEN_STORAGE_KEY) !== "true"
+    );
   });
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [tutorialTargetRect, setTutorialTargetRect] =
@@ -2467,9 +2489,98 @@ function DesktopApp() {
     };
   }, [refreshSpeechSupport]);
 
+  const openPrivacyPolicy = useCallback(() => {
+    privacyReturnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setShowPrivacyPolicy(true);
+  }, []);
+
+  const closePrivacyPolicy = useCallback(() => {
+    setShowPrivacyPolicy(false);
+    const returnTarget = privacyReturnFocusRef.current;
+    privacyReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => returnTarget?.focus());
+  }, []);
+
+  const continueFromPrivacyNotice = useCallback(() => {
+    if (rememberPrivacyNotice) {
+      window.localStorage.setItem(
+        PRIVACY_NOTICE_STORAGE_KEY,
+        PRIVACY_NOTICE_VERSION,
+      );
+    }
+
+    setShowPrivacyNotice(false);
+    if (window.localStorage.getItem(TUTORIAL_SEEN_STORAGE_KEY) !== "true") {
+      window.setTimeout(() => setShowTutorial(true), 0);
+    }
+  }, [rememberPrivacyNotice]);
+
+  const reviewPrivacyNotice = useCallback(() => {
+    window.localStorage.removeItem(PRIVACY_NOTICE_STORAGE_KEY);
+    setRememberPrivacyNotice(false);
+    setShowPrivacyPolicy(false);
+    setShowPrivacyNotice(true);
+  }, []);
+
+  useEffect(() => {
+    const dialog = showPrivacyPolicy
+      ? privacyPolicyRef.current
+      : showPrivacyNotice
+        ? privacyNoticeRef.current
+        : null;
+    if (!dialog) return;
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      dialog.querySelector<HTMLElement>("[data-privacy-autofocus]")?.focus();
+    });
+
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && showPrivacyPolicy) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closePrivacyPolicy();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    window.addEventListener("keydown", containFocus, true);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", containFocus, true);
+    };
+  }, [closePrivacyPolicy, showPrivacyNotice, showPrivacyPolicy]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (showTutorial || e.code !== "Space" || e.repeat) return;
+      if (
+        showTutorial ||
+        showPrivacyNotice ||
+        showPrivacyPolicy ||
+        e.code !== "Space" ||
+        e.repeat
+      )
+        return;
 
       const target = e.target as HTMLElement | null;
       if (
@@ -2490,7 +2601,15 @@ function DesktopApp() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isActive, pill, showTutorial, start, stop]);
+  }, [
+    isActive,
+    pill,
+    showPrivacyNotice,
+    showPrivacyPolicy,
+    showTutorial,
+    start,
+    stop,
+  ]);
 
   const currentTutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
 
@@ -2637,6 +2756,8 @@ function DesktopApp() {
 
   useEffect(() => {
     const onTransientKeyDown = (event: KeyboardEvent) => {
+      if (showPrivacyNotice || showPrivacyPolicy) return;
+
       if (!showTutorial) {
         if (event.key !== "Escape") return;
         if (showSettings) setShowSettings(false);
@@ -2698,6 +2819,8 @@ function DesktopApp() {
     closeTutorial,
     goToNextTutorialStep,
     goToPreviousTutorialStep,
+    showPrivacyNotice,
+    showPrivacyPolicy,
     showSessionLog,
     showSettings,
     showTutorial,
@@ -3770,29 +3893,6 @@ function DesktopApp() {
                   </section>
 
                   <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div
-                        className={`flex items-center gap-2 text-xs font-semibold ${subtleTextClass}`}
-                      >
-                        <BookOpen size={15} aria-hidden="true" />
-                        Tutorial
-                      </div>
-                      <span
-                        className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${isDarkTheme ? "border-white/10 bg-white/5" : "border-stone-200 bg-stone-50"} ${mutedTextClass}`}
-                      >
-                        Available anytime
-                      </span>
-                    </div>
-                    <button
-                      onClick={openTutorial}
-                      className={`w-full rounded-xl border text-sm font-semibold py-2.5 transition-colors flex items-center justify-center gap-2 ${isDarkTheme ? "border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white" : "border-stone-200 bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900"}`}
-                    >
-                      <BookOpen size={16} />
-                      Show Tutorial
-                    </button>
-                  </section>
-
-                  <section className={`space-y-3 rounded-2xl border p-4 ${isDarkTheme ? "border-white/8 bg-white/[0.025]" : "border-stone-200 bg-white/70"}`}>
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <div
@@ -3854,6 +3954,48 @@ function DesktopApp() {
                             : autoPipStatusLabel}
                       </span>
                     </div>
+                  </section>
+
+                  <section
+                    className={`space-y-3 rounded-2xl border p-4 ${
+                      isDarkTheme
+                        ? "border-white/8 bg-white/[0.025]"
+                        : "border-stone-200 bg-white/70"
+                    }`}
+                  >
+                    <div>
+                      <div
+                        className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
+                      >
+                        <ShieldCheck size={16} aria-hidden="true" />
+                        Privacy &amp; data
+                      </div>
+                      <p className={`mt-1 text-[11px] leading-relaxed ${mutedTextClass}`}>
+                        Review how camera frames and local preferences are handled.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openPrivacyPolicy}
+                      className={`flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-sm font-semibold transition-colors ${
+                        isDarkTheme
+                          ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+                          : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50 hover:text-stone-900"
+                      }`}
+                    >
+                      View Privacy &amp; Data Use
+                    </button>
+                    <button
+                      type="button"
+                      onClick={reviewPrivacyNotice}
+                      className={`w-full rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                        isDarkTheme
+                          ? "text-white/55 hover:bg-white/5 hover:text-white/80"
+                          : "text-stone-500 hover:bg-stone-100 hover:text-stone-800"
+                      }`}
+                    >
+                      Review startup notice
+                    </button>
                   </section>
                     </div>
                   </div>
@@ -3983,6 +4125,240 @@ function DesktopApp() {
             floatingRootRef.current,
           )
         : null}
+
+      {showPrivacyNotice && !showPrivacyPolicy ? (
+        <div
+          className={`fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
+        >
+          <div
+            ref={privacyNoticeRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="privacy-notice-title"
+            aria-describedby="privacy-notice-description"
+            className={`max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-[1.75rem] border p-5 shadow-[0_28px_90px_-28px_rgba(0,0,0,0.7)] sm:p-7 ${
+              isDarkTheme
+                ? "border-white/12 bg-[#171715] text-[#f4f0e8]"
+                : "border-[#ded8cc] bg-[#fffdf8] text-[#1c1b19]"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#d39a38]/35 bg-[#d39a38]/12 text-[#d39a38]">
+                <ShieldCheck size={21} aria-hidden="true" />
+              </span>
+              <div>
+                <p className={`text-xs font-semibold ${mutedTextClass}`}>
+                  Privacy before posture guidance
+                </p>
+                <h2
+                  id="privacy-notice-title"
+                  className="mt-0.5 text-2xl font-bold tracking-[-0.025em]"
+                >
+                  Your camera stays private
+                </h2>
+              </div>
+            </div>
+
+            <p
+              id="privacy-notice-description"
+              className={`mt-5 text-[0.9375rem] leading-6 ${quietTextClass}`}
+            >
+              Uprightly analyzes your camera feed live for posture guidance. It
+              does not record, upload, or save video clips.
+            </p>
+
+            <div
+              className={`mt-5 grid gap-3 rounded-2xl border p-4 text-sm ${
+                isDarkTheme
+                  ? "border-white/10 bg-black/20 text-white/70"
+                  : "border-[#e5dfd4] bg-[#f6f2ea] text-stone-600"
+              }`}
+            >
+              <p>
+                <strong className={isDarkTheme ? "text-white/90" : "text-stone-800"}>
+                  Camera frames
+                </strong>{" "}
+                are processed temporarily in your browser.
+              </p>
+              <p>
+                <strong className={isDarkTheme ? "text-white/90" : "text-stone-800"}>
+                  Numerical posture measurements
+                </strong>{" "}
+                may be sent to the analysis service—never images or video.
+              </p>
+              <p>
+                <strong className={isDarkTheme ? "text-white/90" : "text-stone-800"}>
+                  Local preferences
+                </strong>{" "}
+                stay in this browser. Uprightly does not currently create cookies.
+              </p>
+            </div>
+
+            <label
+              className={`mt-5 flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
+                isDarkTheme
+                  ? "border-white/10 bg-white/[0.025] text-white/75"
+                  : "border-stone-200 bg-white/70 text-stone-700"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={rememberPrivacyNotice}
+                onChange={(event) =>
+                  setRememberPrivacyNotice(event.target.checked)
+                }
+                className="mt-0.5 h-4 w-4 shrink-0 accent-[#d39a38]"
+              />
+              <span>
+                <span className="font-semibold">Don&apos;t show this message again</span>
+                <span className={`mt-0.5 block text-xs ${mutedTextClass}`}>
+                  Saves only this preference in your browser.
+                </span>
+              </span>
+            </label>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-[1fr_auto]">
+              <button
+                type="button"
+                data-privacy-autofocus
+                onClick={continueFromPrivacyNotice}
+                className={`min-h-11 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${primaryButtonClass}`}
+              >
+                Continue
+              </button>
+              <button
+                type="button"
+                onClick={openPrivacyPolicy}
+                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                  isDarkTheme
+                    ? "border-white/15 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white"
+                    : "border-[#ded8cc] bg-white text-stone-600 hover:bg-[#f2efe7] hover:text-stone-900"
+                }`}
+              >
+                Read Privacy &amp; Data Use
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showPrivacyPolicy ? (
+        <div
+          className={`fixed inset-0 z-[80] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
+        >
+          <div
+            ref={privacyPolicyRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="privacy-policy-title"
+            aria-describedby="privacy-policy-summary"
+            className={`flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[1.75rem] border shadow-[0_28px_90px_-28px_rgba(0,0,0,0.7)] ${
+              isDarkTheme
+                ? "border-white/12 bg-[#171715] text-[#f4f0e8]"
+                : "border-[#ded8cc] bg-[#fffdf8] text-[#1c1b19]"
+            }`}
+          >
+            <div className={`flex shrink-0 items-start justify-between gap-4 border-b px-5 py-5 sm:px-7 ${isDarkTheme ? "border-white/8" : "border-stone-200"}`}>
+              <div className="flex items-center gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#d39a38]/35 bg-[#d39a38]/12 text-[#d39a38]">
+                  <ShieldCheck size={21} aria-hidden="true" />
+                </span>
+                <div>
+                  <h2
+                    id="privacy-policy-title"
+                    className="text-xl font-bold tracking-[-0.02em]"
+                  >
+                    Privacy &amp; Data Use
+                  </h2>
+                  <p className={`mt-0.5 text-xs ${mutedTextClass}`}>
+                    Version {PRIVACY_NOTICE_VERSION} · Updated {PRIVACY_POLICY_UPDATED}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-privacy-autofocus
+                onClick={closePrivacyPolicy}
+                aria-label="Close privacy policy"
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-colors ${
+                  isDarkTheme
+                    ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+                    : "border-[#ded8cc] bg-white text-stone-600 hover:bg-[#f2efe7] hover:text-stone-900"
+                }`}
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-5 py-5 sm:px-7">
+              <p id="privacy-policy-summary" className={`text-sm leading-6 ${quietTextClass}`}>
+                This notice explains how Uprightly uses your camera and handles
+                information while providing live posture guidance.
+              </p>
+
+              <div className="mt-6 space-y-6">
+                <section>
+                  <h3 className="font-semibold">Camera access</h3>
+                  <p className={`mt-1.5 text-sm leading-6 ${quietTextClass}`}>
+                    Camera access begins only after you press Start Session and
+                    approve the browser permission. Uprightly requests video only,
+                    not microphone audio. Stopping the session ends the active
+                    camera stream.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="font-semibold">Video and image handling</h3>
+                  <p className={`mt-1.5 text-sm leading-6 ${quietTextClass}`}>
+                    Camera frames are analyzed temporarily in your browser to find
+                    posture landmarks. Uprightly does not record, upload, or save
+                    video clips or camera images.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="font-semibold">Posture measurements</h3>
+                  <p className={`mt-1.5 text-sm leading-6 ${quietTextClass}`}>
+                    Derived numerical measurements—such as trunk angle, head
+                    position, shoulder tilt, and stability—may be sent to the
+                    configured analysis service. These requests do not contain
+                    images, video, or audio.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="font-semibold">Cookies and local preferences</h3>
+                  <p className={`mt-1.5 text-sm leading-6 ${quietTextClass}`}>
+                    Uprightly does not currently create cookies. Theme choice,
+                    tutorial completion, and your privacy-notice preference are
+                    stored locally in this browser. Clearing site data removes
+                    these preferences.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="font-semibold">Your control</h3>
+                  <p className={`mt-1.5 text-sm leading-6 ${quietTextClass}`}>
+                    You can stop a session at any time and revoke camera access in
+                    your browser settings. You can also reopen this notice from
+                    Settings whenever you want.
+                  </p>
+                </section>
+              </div>
+            </div>
+
+            <div className={`shrink-0 border-t px-5 py-4 sm:px-7 ${isDarkTheme ? "border-white/8" : "border-stone-200"}`}>
+              <button
+                type="button"
+                onClick={closePrivacyPolicy}
+                className={`min-h-11 w-full rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${primaryButtonClass}`}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showTutorial ? (
         <div className="pointer-events-none fixed inset-0 z-50">
