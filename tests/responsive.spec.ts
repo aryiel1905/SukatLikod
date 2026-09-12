@@ -7,17 +7,24 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("mobile dashboard stays reachable without horizontal overflow", async ({
+test("mobile shows only the computer compatibility notice", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
   await expect(
-    page.getByRole("button", { name: "Start Session" }),
+    page.getByRole("heading", { name: "Designed for computers" }),
   ).toBeVisible();
-  await expect(page.getByText("Posture Score").last()).toBeVisible();
-  await expect(page.getByText("Shoulder Tilt").last()).toBeVisible();
+  await expect(
+    page.getByText(
+      "Open Uprightly on a laptop or desktop with a camera to begin posture monitoring.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start Session" }),
+  ).toHaveCount(0);
+  await expect(page.locator("video, canvas")).toHaveCount(0);
 
   const viewportMetrics = await page.evaluate(() => ({
     innerWidth: window.innerWidth,
@@ -27,43 +34,28 @@ test("mobile dashboard stays reachable without horizontal overflow", async ({
   expect(viewportMetrics.scrollWidth).toBeLessThanOrEqual(
     viewportMetrics.innerWidth,
   );
-  expect(viewportMetrics.scrollHeight).toBeGreaterThan(600);
+  expect(viewportMetrics.scrollHeight).toBeLessThanOrEqual(844);
 });
 
-test("idle activity sheet is compact and exposes consistent panel tabs", async ({
+test("application mounts only at the desktop breakpoint", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1023, height: 768 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Open activity" }).click();
+  const notice = page.getByRole("heading", { name: "Designed for computers" });
+  await expect(notice).toBeVisible();
 
-  const activityPanel = page.locator('section[aria-label="Activity"]');
-  const settingsTab = page.getByRole("tab", { name: "Settings" });
-
-  await expect(activityPanel).toBeVisible();
-  await expect(page.getByText("No activity yet")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Activity" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(settingsTab).toHaveAttribute("aria-selected", "false");
+  await page.setViewportSize({ width: 1024, height: 768 });
   await expect(
-    page.getByRole("button", { name: "Close utility panel" }),
+    page.getByRole("button", { name: "Start Session" }),
   ).toBeVisible();
+  await expect(notice).toBeHidden();
 
-  const [sheetBox, settingsBox] = await Promise.all([
-    activityPanel.boundingBox(),
-    settingsTab.boundingBox(),
-  ]);
-
-  expect(sheetBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(355);
-  expect(
-    sheetBox
-      ? sheetBox.y + sheetBox.height
-      : Number.POSITIVE_INFINITY,
-  ).toBeLessThanOrEqual(844);
-  expect(settingsBox?.width ?? 0).toBeGreaterThanOrEqual(44);
-  expect(settingsBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await page.setViewportSize({ width: 1023, height: 768 });
+  await expect(notice).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start Session" }),
+  ).toHaveCount(0);
 });
 
 test("desktop camera remains the dominant canvas", async ({ page }) => {
@@ -106,7 +98,7 @@ test("activity and settings use one mutually exclusive utility panel", async ({
   await expect(activityPanel).toBeVisible();
   await expect
     .poll(async () => (await activityPanel.boundingBox())?.width ?? 0)
-    .toBeGreaterThan(360);
+    .toBeGreaterThan(380);
   const activityBox = await activityPanel.boundingBox();
   await page.getByRole("tab", { name: "Settings" }).click();
 
@@ -127,6 +119,13 @@ test("activity and settings use one mutually exclusive utility panel", async ({
   await expect(
     panelControls.getByRole("button", { name: "Close utility panel" }),
   ).toBeVisible();
+  const [activityTabBox, settingsTabBox] = await Promise.all([
+    panelControls.getByRole("tab", { name: "Activity" }).boundingBox(),
+    panelControls.getByRole("tab", { name: "Settings" }).boundingBox(),
+  ]);
+  expect(
+    Math.abs((activityTabBox?.width ?? 0) - (settingsTabBox?.width ?? 0)),
+  ).toBeLessThanOrEqual(1);
 
   const [settingsBox, cameraBoxAfter] = await Promise.all([
     settingsPanel.boundingBox(),
@@ -280,9 +279,7 @@ test("tutorial keyboard controls take precedence over the session shortcut", asy
 
 test("tutorial remains within constrained viewports", async ({ page }) => {
   const viewports = [
-    { width: 320, height: 568 },
-    { width: 390, height: 844 },
-    { width: 768, height: 1024 },
+    { width: 1024, height: 640 },
     { width: 1280, height: 720 },
     { width: 1440, height: 1000 },
   ];
@@ -291,14 +288,7 @@ test("tutorial remains within constrained viewports", async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    const desktopLauncher = page.getByRole("button", { name: "Open Tutorial" });
-    if (await desktopLauncher.isVisible()) {
-      await desktopLauncher.click();
-    } else {
-      await page.getByRole("button", { name: "Open activity" }).click();
-      await page.getByRole("tab", { name: "Settings" }).click();
-      await page.getByRole("button", { name: "Show Tutorial" }).click();
-    }
+    await page.getByRole("button", { name: "Open Tutorial" }).click();
 
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();

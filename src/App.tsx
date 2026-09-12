@@ -610,7 +610,77 @@ function getFeedbackPresentation(
   return { type, title, color, bg, text, audio };
 }
 
+const DESKTOP_VIEWPORT_QUERY = "(min-width: 1024px)";
+
+function useDesktopViewport() {
+  const [isDesktopViewport, setIsDesktopViewport] = useState(() =>
+    typeof window === "undefined"
+      ? true
+      : window.matchMedia(DESKTOP_VIEWPORT_QUERY).matches,
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(DESKTOP_VIEWPORT_QUERY);
+    const handleChange = (event: MediaQueryListEvent) =>
+      setIsDesktopViewport(event.matches);
+
+    setIsDesktopViewport(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  return isDesktopViewport;
+}
+
+function MobileCompatibilityNotice() {
+  useEffect(() => {
+    document.documentElement.style.colorScheme = "dark";
+    document.body.style.background = "#10100f";
+  }, []);
+
+  return (
+    <main className="relative flex min-h-dvh w-full max-w-full items-center justify-center overflow-hidden bg-[#10100f] px-6 py-12 font-sans text-[#f4f0e8]">
+      <div
+        className="pointer-events-none absolute inset-0"
+        aria-hidden="true"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 18%, rgba(211,154,56,0.14), transparent 34%), radial-gradient(circle at 82% 88%, rgba(145,168,137,0.07), transparent 28%)",
+        }}
+      />
+      <section
+        className="relative w-full max-w-md rounded-[2rem] border border-white/10 bg-[#171715]/95 p-7 text-center shadow-[0_30px_90px_-35px_rgba(0,0,0,0.9)] backdrop-blur-xl sm:p-9"
+        aria-labelledby="desktop-required-title"
+        aria-describedby="desktop-required-description"
+      >
+        <p className="text-3xl font-bold tracking-[-0.045em]">Uprightly</p>
+        <div className="mx-auto mt-7 flex h-16 w-16 items-center justify-center rounded-2xl border border-[#d39a38]/30 bg-[#d39a38]/10 text-[#e8bd70]">
+          <Monitor size={28} strokeWidth={1.8} aria-hidden="true" />
+        </div>
+        <h1
+          id="desktop-required-title"
+          className="mx-auto mt-6 max-w-md text-2xl font-bold leading-tight tracking-[-0.025em]"
+        >
+          Designed for computers
+        </h1>
+        <p
+          id="desktop-required-description"
+          className="mx-auto mt-3 max-w-sm text-[0.9375rem] leading-6 text-white/60"
+        >
+          Open Uprightly on a laptop or desktop with a camera to begin posture
+          monitoring.
+        </p>
+      </section>
+    </main>
+  );
+}
+
 export default function App() {
+  const isDesktopViewport = useDesktopViewport();
+  return isDesktopViewport ? <DesktopApp /> : <MobileCompatibilityNotice />;
+}
+
+function DesktopApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -3190,7 +3260,7 @@ export default function App() {
                         aria-label="Panel controls"
                       >
                         <div
-                          className="flex min-w-0 flex-1 items-center gap-1"
+                          className="grid min-w-0 flex-1 grid-cols-2 gap-1"
                           role="tablist"
                           aria-label="Utility panel"
                         >
@@ -3198,7 +3268,7 @@ export default function App() {
                             type="button"
                             role="tab"
                             aria-selected="true"
-                            className="flex min-h-11 items-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
                           >
                             <Bell size={16} aria-hidden="true" />
                             Activity
@@ -3211,7 +3281,7 @@ export default function App() {
                               setShowSessionLog(false);
                               setShowSettings(true);
                             }}
-                            className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
+                            className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
                               isDarkTheme
                                 ? "text-white/65 hover:bg-white/10 hover:text-white"
                                 : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
@@ -3474,7 +3544,7 @@ export default function App() {
                     aria-label="Panel controls"
                   >
                     <div
-                      className="flex min-w-0 flex-1 items-center gap-1"
+                      className="grid min-w-0 flex-1 grid-cols-2 gap-1"
                       role="tablist"
                       aria-label="Utility panel"
                     >
@@ -3486,7 +3556,7 @@ export default function App() {
                           setShowSettings(false);
                           setShowSessionLog(true);
                         }}
-                        className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
+                        className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
                           isDarkTheme
                             ? "text-white/65 hover:bg-white/10 hover:text-white"
                             : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
@@ -3499,7 +3569,7 @@ export default function App() {
                         type="button"
                         role="tab"
                         aria-selected="true"
-                        className="flex min-h-11 items-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
+                        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#d39a38] px-3 text-sm font-semibold text-[#171612]"
                       >
                         <Settings size={16} aria-hidden="true" />
                         Settings
