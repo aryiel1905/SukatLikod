@@ -199,7 +199,7 @@ const UPPER_FRONT_SCORE_CAP = 86;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
 const PRIVACY_NOTICE_STORAGE_KEY = "uprightly-privacy-notice";
-const PRIVACY_NOTICE_VERSION = "1";
+const PRIVACY_NOTICE_VERSION = "2";
 const PRIVACY_POLICY_UPDATED = "September 12, 2026";
 const DEFAULT_SENSITIVITY: Sensitivity = {
   trunkAngle: 18,
@@ -783,6 +783,9 @@ function DesktopApp() {
   const [showPrivacyNotice, setShowPrivacyNotice] = useState(
     () => !hasAcknowledgedPrivacyNotice(),
   );
+  const [startupNoticeStep, setStartupNoticeStep] = useState<
+    "purpose" | "privacy"
+  >("purpose");
   const [rememberPrivacyNotice, setRememberPrivacyNotice] = useState(false);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showTutorial, setShowTutorial] = useState(() => {
@@ -2518,8 +2521,13 @@ function DesktopApp() {
     }
   }, [rememberPrivacyNotice]);
 
+  const continueToPrivacyNotice = useCallback(() => {
+    setStartupNoticeStep("privacy");
+  }, []);
+
   const reviewPrivacyNotice = useCallback(() => {
     window.localStorage.removeItem(PRIVACY_NOTICE_STORAGE_KEY);
+    setStartupNoticeStep("purpose");
     setRememberPrivacyNotice(false);
     setShowPrivacyPolicy(false);
     setShowPrivacyNotice(true);
@@ -2569,7 +2577,12 @@ function DesktopApp() {
       window.cancelAnimationFrame(focusFrame);
       window.removeEventListener("keydown", containFocus, true);
     };
-  }, [closePrivacyPolicy, showPrivacyNotice, showPrivacyPolicy]);
+  }, [
+    closePrivacyPolicy,
+    showPrivacyNotice,
+    showPrivacyPolicy,
+    startupNoticeStep,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -4126,7 +4139,93 @@ function DesktopApp() {
           )
         : null}
 
-      {showPrivacyNotice && !showPrivacyPolicy ? (
+      {showPrivacyNotice &&
+      !showPrivacyPolicy &&
+      startupNoticeStep === "purpose" ? (
+        <div
+          className={`fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
+        >
+          <div
+            ref={privacyNoticeRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="purpose-notice-title"
+            aria-describedby="purpose-notice-description"
+            className={`max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-[1.75rem] border p-5 shadow-[0_28px_90px_-28px_rgba(0,0,0,0.7)] sm:p-7 ${
+              isDarkTheme
+                ? "border-white/12 bg-[#171715] text-[#f4f0e8]"
+                : "border-[#ded8cc] bg-[#fffdf8] text-[#1c1b19]"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#d39a38]/35 bg-[#d39a38]/12 text-[#d39a38]">
+                <Activity size={21} aria-hidden="true" />
+              </span>
+              <div>
+                <p className={`text-xs font-semibold ${mutedTextClass}`}>
+                  Before you begin · 1 of 2
+                </p>
+                <h2
+                  id="purpose-notice-title"
+                  className="mt-0.5 text-2xl font-bold tracking-[-0.025em]"
+                >
+                  Welcome to Uprightly
+                </h2>
+              </div>
+            </div>
+
+            <p
+              id="purpose-notice-description"
+              className={`mt-5 text-[0.9375rem] leading-6 ${quietTextClass}`}
+            >
+              Uprightly is a real-time posture guidance tool for people who
+              spend time at a computer. It helps you notice how you sit and make
+              small adjustments while you work.
+            </p>
+
+            <div
+              className={`mt-5 grid gap-4 rounded-2xl border p-4 ${
+                isDarkTheme
+                  ? "border-white/10 bg-black/20"
+                  : "border-[#e5dfd4] bg-[#f6f2ea]"
+              }`}
+            >
+              <div>
+                <h3 className="text-sm font-semibold">How it helps</h3>
+                <p className={`mt-1 text-sm leading-6 ${quietTextClass}`}>
+                  It estimates the alignment of your head, shoulders, and upper
+                  body, then provides calm visual and optional voice feedback
+                  when your posture may need attention.
+                </p>
+              </div>
+              <div
+                className={`border-t pt-4 ${
+                  isDarkTheme ? "border-white/8" : "border-stone-200"
+                }`}
+              >
+                <h3 className="text-sm font-semibold">Guidance, not medical care</h3>
+                <p className={`mt-1 text-sm leading-6 ${quietTextClass}`}>
+                  Uprightly supports posture awareness. It is not intended to
+                  diagnose, treat, or replace advice from a healthcare professional.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              data-privacy-autofocus
+              onClick={continueToPrivacyNotice}
+              className={`mt-5 min-h-11 w-full rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${primaryButtonClass}`}
+            >
+              Continue to privacy
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {showPrivacyNotice &&
+      !showPrivacyPolicy &&
+      startupNoticeStep === "privacy" ? (
         <div
           className={`fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
         >
@@ -4148,7 +4247,7 @@ function DesktopApp() {
               </span>
               <div>
                 <p className={`text-xs font-semibold ${mutedTextClass}`}>
-                  Privacy before posture guidance
+                  Privacy before posture guidance · 2 of 2
                 </p>
                 <h2
                   id="privacy-notice-title"
@@ -4217,7 +4316,18 @@ function DesktopApp() {
               </span>
             </label>
 
-            <div className="mt-5 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <div className="mt-5 grid gap-2 sm:grid-cols-[auto_1fr]">
+              <button
+                type="button"
+                onClick={() => setStartupNoticeStep("purpose")}
+                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                  isDarkTheme
+                    ? "border-white/15 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white"
+                    : "border-[#ded8cc] bg-white text-stone-600 hover:bg-[#f2efe7] hover:text-stone-900"
+                }`}
+              >
+                Back
+              </button>
               <button
                 type="button"
                 data-privacy-autofocus
@@ -4229,7 +4339,7 @@ function DesktopApp() {
               <button
                 type="button"
                 onClick={openPrivacyPolicy}
-                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors sm:col-span-2 ${
                   isDarkTheme
                     ? "border-white/15 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white"
                     : "border-[#ded8cc] bg-white text-stone-600 hover:bg-[#f2efe7] hover:text-stone-900"

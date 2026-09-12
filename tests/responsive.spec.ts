@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.addInitScript((shouldAcknowledgePrivacy) => {
     window.localStorage.setItem("uprightly-tutorial-seen", "true");
     if (shouldAcknowledgePrivacy) {
-      window.localStorage.setItem("uprightly-privacy-notice", "1");
+      window.localStorage.setItem("uprightly-privacy-notice", "2");
     } else {
       window.localStorage.removeItem("uprightly-privacy-notice");
     }
@@ -18,6 +18,16 @@ test("first visit explains camera privacy and remembers an explicit choice", asy
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const purpose = page.getByRole("dialog", { name: "Welcome to Uprightly" });
+  await expect(purpose).toBeVisible();
+  await expect(
+    purpose.getByText("real-time posture guidance tool", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    purpose.getByText("Guidance, not medical care"),
+  ).toBeVisible();
+  await purpose.getByRole("button", { name: "Continue to privacy" }).click();
 
   const notice = page.getByRole("dialog", {
     name: "Your camera stays private",
@@ -39,7 +49,7 @@ test("first visit explains camera privacy and remembers an explicit choice", asy
         window.localStorage.getItem("uprightly-privacy-notice"),
       ),
     )
-    .toBe("1");
+    .toBe("2");
 });
 
 test("privacy policy can be revisited from settings", async ({ page }) => {
