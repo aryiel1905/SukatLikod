@@ -154,6 +154,53 @@ test("desktop camera remains the dominant canvas", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("automatic floating status is settings-only and default-on", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("uprightly-auto-floating-window-v2");
+    Object.defineProperty(window, "documentPictureInPicture", {
+      configurable: true,
+      value: {
+        requestWindow: async () => {
+          throw new Error("The inactive-session test must not open PiP.");
+        },
+      },
+    });
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: {
+        setActionHandler: () => undefined,
+        setCameraActive: () => undefined,
+      },
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByRole("switch", {
+    name: "Floating status when away",
+  })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open settings" }).click();
+
+  const settingsSwitch = page
+    .getByTestId("settings-scroll-area")
+    .getByRole("switch", { name: "Automatic floating window" });
+  await expect(settingsSwitch).toBeChecked();
+  await settingsSwitch.click();
+  await expect(settingsSwitch).not.toBeChecked();
+  await settingsSwitch.click();
+  await expect(settingsSwitch).toBeChecked();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.localStorage.getItem("uprightly-auto-floating-window-v2"),
+      ),
+    )
+    .toBe("true");
+});
+
 test("activity and settings use one mutually exclusive utility panel", async ({
   page,
 }) => {

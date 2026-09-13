@@ -113,6 +113,7 @@ type SilhouetteMetrics = {
 type AudioMode = "off" | "voice";
 type ThemeMode = "dark" | "light";
 type AutoPipStatus = "supported" | "manual_only" | "blocked" | "unsupported";
+type FloatingWindowOrigin = "auto" | "manual" | null;
 type CameraDevice = {
   id: string;
   label: string;
@@ -199,7 +200,7 @@ const UPPER_FRONT_SCORE_CAP = 86;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
 const PRIVACY_NOTICE_STORAGE_KEY = "uprightly-privacy-notice";
-const FLOATING_WINDOW_STORAGE_KEY = "uprightly-auto-floating-window";
+const FLOATING_WINDOW_STORAGE_KEY = "uprightly-auto-floating-window-v2";
 const PRIVACY_NOTICE_VERSION = "2";
 const PRIVACY_POLICY_UPDATED = "September 12, 2026";
 const DEFAULT_SENSITIVITY: Sensitivity = {
@@ -636,7 +637,6 @@ function useDesktopViewport() {
     const handleChange = (event: MediaQueryListEvent) =>
       setIsDesktopViewport(event.matches);
 
-    setIsDesktopViewport(mediaQuery.matches);
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
@@ -736,8 +736,9 @@ function DesktopApp() {
   const holdStillStartRef = useRef<number>(0);
   const floatingWindowRef = useRef<Window | null>(null);
   const floatingRootRef = useRef<HTMLDivElement | null>(null);
-  const autoFloatingWindowRef = useRef(false);
-  const floatingWindowPointerTimerRef = useRef<number | null>(null);
+  const floatingWindowOriginRef = useRef<FloatingWindowOrigin>(null);
+  const floatingWindowOpeningRef = useRef<Promise<void> | null>(null);
+  const floatingWindowRequestIdRef = useRef(0);
   const emaRef = useRef<{
     trunk: number | null;
     head: number | null;
@@ -807,8 +808,8 @@ function DesktopApp() {
   });
   const [isCompactTutorial, setIsCompactTutorial] = useState(false);
   const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(FLOATING_WINDOW_STORAGE_KEY) === "true";
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(FLOATING_WINDOW_STORAGE_KEY) !== "false";
   });
   const [floatingWindowReady, setFloatingWindowReady] = useState(false);
   const [autoPipStatus, setAutoPipStatus] =
@@ -2075,9 +2076,10 @@ function DesktopApp() {
   );
 
   const closeFloatingWindow = useCallback(() => {
+    floatingWindowRequestIdRef.current += 1;
     floatingRootRef.current = null;
     setFloatingWindowReady(false);
-    autoFloatingWindowRef.current = false;
+    floatingWindowOriginRef.current = null;
 
     const pipWindow = floatingWindowRef.current;
     floatingWindowRef.current = null;
@@ -2087,7 +2089,7 @@ function DesktopApp() {
     }
   }, []);
 
-  const openFloatingWindow = useCallback(async () => {
+  const openFloatingWindow = useCallback(async (origin: Exclude<FloatingWindowOrigin, null>) => {
     if (typeof window === "undefined") return;
 
     const pipApi = (
@@ -2099,47 +2101,82 @@ function DesktopApp() {
     if (!pipApi?.requestWindow) return;
 
     if (floatingWindowRef.current && !floatingWindowRef.current.closed) {
-      floatingWindowRef.current.focus();
+      if (origin === "manual") {
+        floatingWindowRef.current.focus();
+      }
       setFloatingWindowReady(true);
       return;
     }
 
-    const pipWindow = await pipApi.requestWindow({
-      width: 456,
-      height: 535,
-    });
+    if (floatingWindowOpeningRef.current) {
+      await floatingWindowOpeningRef.current;
+      return;
+    }
 
-    floatingWindowRef.current = pipWindow;
-    pipWindow.document.title = "SukatLikod Status";
-    pipWindow.document.body.innerHTML = "";
-    pipWindow.document.body.style.margin = "0";
-    pipWindow.document.documentElement.style.width = "100%";
-    pipWindow.document.documentElement.style.height = "100%";
-    pipWindow.document.body.style.width = "100%";
-    pipWindow.document.body.style.height = "100%";
-    pipWindow.document.body.style.minHeight = "0";
-    pipWindow.document.body.style.background = "transparent";
-    pipWindow.document.body.style.overflow = "hidden";
+    const requestId = ++floatingWindowRequestIdRef.current;
+    floatingWindowOriginRef.current = origin;
+    const opening = (async () => {
+      try {
+        const pipWindow = await pipApi.requestWindow({
+          width: 456,
+          height: 535,
+        });
 
-    Array.from(
-      document.querySelectorAll("style, link[rel='stylesheet']"),
-    ).forEach((node) => {
-      pipWindow.document.head.appendChild(node.cloneNode(true));
-    });
+        if (requestId !== floatingWindowRequestIdRef.current) {
+          pipWindow.close();
+          return;
+        }
 
-    const root = pipWindow.document.createElement("div");
-    root.id = "floating-status-root";
-    root.style.width = "100%";
-    root.style.height = "100%";
-    pipWindow.document.body.appendChild(root);
-    floatingRootRef.current = root;
-    setFloatingWindowReady(true);
+        floatingWindowRef.current = pipWindow;
+        pipWindow.document.title = "Uprightly Status";
+        pipWindow.document.body.innerHTML = "";
+        pipWindow.document.body.style.margin = "0";
+        pipWindow.document.documentElement.style.width = "100%";
+        pipWindow.document.documentElement.style.height = "100%";
+        pipWindow.document.body.style.width = "100%";
+        pipWindow.document.body.style.height = "100%";
+        pipWindow.document.body.style.minHeight = "0";
+        pipWindow.document.body.style.background = "transparent";
+        pipWindow.document.body.style.overflow = "hidden";
 
-    pipWindow.addEventListener("pagehide", () => {
-      floatingWindowRef.current = null;
-      floatingRootRef.current = null;
-      setFloatingWindowReady(false);
-    });
+        Array.from(
+          document.querySelectorAll("style, link[rel='stylesheet']"),
+        ).forEach((node) => {
+          pipWindow.document.head.appendChild(node.cloneNode(true));
+        });
+
+        const root = pipWindow.document.createElement("div");
+        root.id = "floating-status-root";
+        root.style.width = "100%";
+        root.style.height = "100%";
+        pipWindow.document.body.appendChild(root);
+        floatingRootRef.current = root;
+        setFloatingWindowReady(true);
+
+        pipWindow.addEventListener("pagehide", () => {
+          if (floatingWindowRef.current !== pipWindow) return;
+          floatingWindowRef.current = null;
+          floatingRootRef.current = null;
+          floatingWindowOriginRef.current = null;
+          setFloatingWindowReady(false);
+        });
+      } catch (error) {
+        if (requestId === floatingWindowRequestIdRef.current) {
+          floatingWindowOriginRef.current = null;
+          setFloatingWindowReady(false);
+        }
+        throw error;
+      }
+    })();
+
+    floatingWindowOpeningRef.current = opening;
+    try {
+      await opening;
+    } finally {
+      if (floatingWindowOpeningRef.current === opening) {
+        floatingWindowOpeningRef.current = null;
+      }
+    }
   }, []);
 
   const start = useCallback(
@@ -2248,7 +2285,10 @@ function DesktopApp() {
   }, []);
 
   useEffect(() => {
-    if (!floatingWindowEnabled && autoFloatingWindowRef.current) {
+    if (
+      !floatingWindowEnabled &&
+      floatingWindowOriginRef.current === "auto"
+    ) {
       closeFloatingWindow();
     }
   }, [closeFloatingWindow, floatingWindowEnabled]);
@@ -2256,10 +2296,10 @@ function DesktopApp() {
   useEffect(() => closeFloatingWindow, [closeFloatingWindow]);
 
   useEffect(() => {
-    if (!isActive && floatingWindowReady) {
+    if (!isActive && floatingWindowOriginRef.current !== null) {
       closeFloatingWindow();
     }
-  }, [closeFloatingWindow, floatingWindowReady, isActive]);
+  }, [closeFloatingWindow, isActive]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2343,13 +2383,9 @@ function DesktopApp() {
 
     try {
       navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, () => {
-        void openFloatingWindow()
-          .then(() => {
-            autoFloatingWindowRef.current = true;
-          })
-          .catch((error) => {
+        void openFloatingWindow("auto").catch((error) => {
             console.error("Automatic floating window failed:", error);
-          });
+        });
       });
     } catch (error) {
       console.warn("Automatic floating window is not supported here:", error);
@@ -2366,113 +2402,32 @@ function DesktopApp() {
   }, [floatingWindowEnabled, isActive, openFloatingWindow]);
 
   useEffect(() => {
-    const supportsFloatingWindow =
-      typeof window !== "undefined" &&
-      !!(
-        window as Window & {
-          documentPictureInPicture?: DocumentPictureInPictureApi;
-        }
-      ).documentPictureInPicture?.requestWindow;
+    if (!isActive || !floatingWindowEnabled) return;
 
-    if (
-      typeof window === "undefined" ||
-      !supportsFloatingWindow ||
-      !isActive ||
-      !floatingWindowEnabled
-    ) {
-      if (floatingWindowPointerTimerRef.current !== null) {
-        window.clearTimeout(floatingWindowPointerTimerRef.current);
-        floatingWindowPointerTimerRef.current = null;
-      }
-      if (autoFloatingWindowRef.current) {
+    const closeAutomaticWindowOnReturn = () => {
+      if (
+        !document.hidden &&
+        document.hasFocus() &&
+        floatingWindowOriginRef.current === "auto"
+      ) {
         closeFloatingWindow();
       }
-      return;
-    }
-
-    let pointerOutsidePage = false;
-
-    const clearPointerTimer = () => {
-      if (floatingWindowPointerTimerRef.current === null) return;
-      window.clearTimeout(floatingWindowPointerTimerRef.current);
-      floatingWindowPointerTimerRef.current = null;
     };
 
-    const syncFloatingWindowWithFocus = () => {
-      const pageFocused = document.hasFocus() && !document.hidden;
-      const shouldFloat = !pageFocused || pointerOutsidePage;
-
-      if (!shouldFloat) {
-        if (autoFloatingWindowRef.current) {
-          closeFloatingWindow();
-        }
-        return;
-      }
-
-      if (
-        autoFloatingWindowRef.current ||
-        (floatingWindowRef.current && !floatingWindowRef.current.closed)
-      ) {
-        return;
-      }
-
-      void openFloatingWindow()
-        .then(() => {
-          autoFloatingWindowRef.current = true;
-        })
-        .catch((error) => {
-          console.info(
-            "Automatic floating window requires browser permission or a manual open:",
-            error,
-          );
-        });
-    };
-
-    const handlePointerLeave = () => {
-      pointerOutsidePage = true;
-      clearPointerTimer();
-      floatingWindowPointerTimerRef.current = window.setTimeout(() => {
-        floatingWindowPointerTimerRef.current = null;
-        syncFloatingWindowWithFocus();
-      }, 700);
-    };
-
-    const handlePointerEnter = () => {
-      pointerOutsidePage = false;
-      clearPointerTimer();
-      syncFloatingWindowWithFocus();
-    };
-
-    syncFloatingWindowWithFocus();
-    document.addEventListener("visibilitychange", syncFloatingWindowWithFocus);
-    window.addEventListener("focus", syncFloatingWindowWithFocus);
-    window.addEventListener("blur", syncFloatingWindowWithFocus);
-    document.documentElement.addEventListener("pointerleave", handlePointerLeave);
-    document.documentElement.addEventListener("pointerenter", handlePointerEnter);
+    document.addEventListener(
+      "visibilitychange",
+      closeAutomaticWindowOnReturn,
+    );
+    window.addEventListener("focus", closeAutomaticWindowOnReturn);
 
     return () => {
-      clearPointerTimer();
       document.removeEventListener(
         "visibilitychange",
-        syncFloatingWindowWithFocus,
+        closeAutomaticWindowOnReturn,
       );
-      window.removeEventListener("focus", syncFloatingWindowWithFocus);
-      window.removeEventListener("blur", syncFloatingWindowWithFocus);
-      document.documentElement.removeEventListener(
-        "pointerleave",
-        handlePointerLeave,
-      );
-      document.documentElement.removeEventListener(
-        "pointerenter",
-        handlePointerEnter,
-      );
+      window.removeEventListener("focus", closeAutomaticWindowOnReturn);
     };
-  }, [
-    closeFloatingWindow,
-    floatingWindowEnabled,
-    isActive,
-    openFloatingWindow,
-  ]);
+  }, [closeFloatingWindow, floatingWindowEnabled, isActive]);
 
   useEffect(() => {
     if (!mlApiUrl) {
@@ -4086,7 +4041,7 @@ function DesktopApp() {
                         className={`text-[11px] leading-relaxed ${mutedTextClass}`}
                       >
                         During an active session, it opens after you switch tabs,
-                        change apps, or leave the page with your pointer.
+                        minimize Uprightly, or change to another app.
                       </p>
                     ) : null}
                     <div
@@ -4107,8 +4062,7 @@ function DesktopApp() {
                       <button
                         type="button"
                         onClick={() => {
-                          autoFloatingWindowRef.current = false;
-                          void openFloatingWindow().catch((error) => {
+                          void openFloatingWindow("manual").catch((error) => {
                             console.error("Floating window failed:", error);
                           });
                         }}
