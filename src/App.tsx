@@ -36,6 +36,11 @@ import type {
 } from "@mediapipe/tasks-vision";
 import { MetricCard } from "./components/MetricCard";
 import {
+  TutorialOverlay,
+  type TutorialOverlayStep,
+  type TutorialVisualKind,
+} from "./features/tutorial/TutorialOverlay";
+import {
   average as avg,
   clamp,
   metricQuality,
@@ -131,19 +136,8 @@ type TutorialStep = {
   title: string;
   body: string;
 };
-type GuidedTrialStepId =
-  | "baseline"
-  | "forward"
-  | "shoulders"
-  | "framing"
-  | "neutral"
-  | "floating";
-type GuidedTrialStep = {
-  id: GuidedTrialStepId;
-  title: string;
-  instruction: string;
-  expected: string;
-};
+type GuidedTrialStepId = TutorialVisualKind;
+type GuidedTrialStep = TutorialOverlayStep;
 type TutorialRect = {
   top: number;
   left: number;
@@ -268,38 +262,38 @@ const TUTORIAL_STEPS: TutorialStep[] = [
 const GUIDED_TRIAL_STEPS: GuidedTrialStep[] = [
   {
     id: "baseline",
-    title: "Establish your starting posture",
+    title: "Sit in your starting posture",
     instruction:
-      "Sit comfortably upright, face the camera, and keep your head and shoulders visible. Hold still for a few seconds.",
-    expected: "Tracking becomes stable and Uprightly establishes a reference.",
+      "Sit comfortably upright. Center your face and keep both shoulders visible, then hold still.",
+    expected: "Stable tracking and a starting reference.",
   },
   {
     id: "forward",
-    title: "Try a gentle forward posture",
+    title: "Lean slightly forward",
     instruction:
-      "Move your head and upper body slightly forward, then hold that position briefly.",
-    expected: "Look for Bring your head back or Sit straighter.",
+      "Move your head and upper body slightly toward the camera, then hold that position.",
+    expected: "Bring your head back or Sit straighter.",
   },
   {
     id: "shoulders",
-    title: "Change your shoulder alignment",
+    title: "Raise one shoulder",
     instruction:
-      "Gently raise or lower one shoulder while keeping both shoulders visible.",
-    expected: "Look for Level your shoulders.",
+      "Raise either shoulder slightly while keeping both shoulders inside the frame.",
+    expected: "Level your shoulders.",
   },
   {
     id: "framing",
-    title: "Test camera framing",
+    title: "Move partly out of frame",
     instruction:
-      "Turn slightly away or move one shoulder partly outside the camera frame.",
+      "Turn slightly or move until one shoulder is partly outside the camera frame.",
     expected: "Uprightly asks you to face the camera or keep both shoulders visible.",
   },
   {
     id: "neutral",
-    title: "Return to neutral",
+    title: "Return to your starting posture",
     instruction:
-      "Return to your original comfortable upright position and hold still.",
-    expected: "The score and guidance recover after the reading stabilizes.",
+      "Sit comfortably upright again and hold still while the reading settles.",
+    expected: "The posture score and guidance recover.",
   },
   {
     id: "floating",
@@ -2508,6 +2502,18 @@ function DesktopApp() {
     setShowGuidedTrial(false);
   }, []);
 
+  const goToPreviousGuidedTrialStep = useCallback(() => {
+    setGuidedTrialStepIndex((index) => Math.max(0, index - 1));
+  }, []);
+
+  const goToNextGuidedTrialStep = useCallback(() => {
+    if (guidedTrialStepIndex === GUIDED_TRIAL_STEPS.length - 1) {
+      finishGuidedTrial();
+      return;
+    }
+    setGuidedTrialStepIndex((index) => index + 1);
+  }, [finishGuidedTrial, guidedTrialStepIndex]);
+
   const requestGuidedTrial = useCallback(() => {
     setShowSettings(false);
     setShowSessionLog(false);
@@ -2531,7 +2537,7 @@ function DesktopApp() {
       return () => window.clearTimeout(errorTimer);
     }
 
-    if (!isActive || trackingHealth < 45) return;
+    if (!isActive) return;
     const readyTimer = window.setTimeout(beginGuidedTrial, 350);
     return () => window.clearTimeout(readyTimer);
   }, [
@@ -2539,7 +2545,6 @@ function DesktopApp() {
     guidedTrialPending,
     isActive,
     pill,
-    trackingHealth,
   ]);
 
   useEffect(() => {
@@ -2764,6 +2769,46 @@ function DesktopApp() {
     showPrivacyNotice,
     showPrivacyPolicy,
     startupNoticeStep,
+  ]);
+
+  useEffect(() => {
+    if (!showGuidedTrial) return;
+
+    const onTutorialKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const isSpace = event.code === "Space" || event.key === " ";
+      if (isSpace && target?.closest("button, a, [role='button']")) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finishGuidedTrial();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goToPreviousGuidedTrialStep();
+      } else if (event.key === "ArrowRight" || isSpace) {
+        event.preventDefault();
+        goToNextGuidedTrialStep();
+      }
+    };
+
+    window.addEventListener("keydown", onTutorialKeyDown);
+    return () => window.removeEventListener("keydown", onTutorialKeyDown);
+  }, [
+    finishGuidedTrial,
+    goToNextGuidedTrialStep,
+    goToPreviousGuidedTrialStep,
+    showGuidedTrial,
   ]);
 
   useEffect(() => {
@@ -3376,7 +3421,7 @@ function DesktopApp() {
               className={`w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-semibold border transition-all ${iconButtonClass}`}
             >
               <BookOpen size={18} />
-              Interactive Tutorial
+              Tutorial
             </button>
 
             <div className="uprightly-desktop-metrics mt-auto flex min-h-0 flex-col gap-4">
@@ -3536,123 +3581,17 @@ function DesktopApp() {
               ) : null}
 
               {showGuidedTrial && isActive ? (
-                <aside
-                  aria-label="Interactive Tutorial"
-                  className={`absolute right-5 top-5 z-30 w-[min(24rem,calc(100%-2.5rem))] overflow-hidden rounded-[1.5rem] border p-6 shadow-2xl backdrop-blur-2xl ${
-                    isDarkTheme
-                      ? "border-white/12 bg-[#171715]/95 text-[#f4f0e8]"
-                      : "border-[#cbdbea] bg-white/95 text-[#1c1b19]"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${mutedTextClass}`}>
-                        Interactive Tutorial
-                      </p>
-                      <p className={`mt-1 text-xs ${mutedTextClass}`}>
-                        Step {guidedTrialStepIndex + 1} of {GUIDED_TRIAL_STEPS.length}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={finishGuidedTrial}
-                      aria-label="End interactive tutorial"
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors ${
-                        isDarkTheme
-                          ? "border-white/15 text-white/65 hover:bg-white/10 hover:text-white"
-                          : "border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-900"
-                      }`}
-                    >
-                      <X size={16} aria-hidden="true" />
-                    </button>
-                  </div>
-
-                  <div className="mt-4 flex gap-1.5" aria-label="Trial progress">
-                    {GUIDED_TRIAL_STEPS.map((step, index) => (
-                      <span
-                        key={step.id}
-                        className={`h-1.5 flex-1 rounded-full transition-colors ${
-                          index <= guidedTrialStepIndex
-                            ? isDarkTheme
-                              ? "bg-[#e8e7e2]"
-                              : "bg-[#0A3A72]"
-                            : isDarkTheme
-                              ? "bg-white/15"
-                              : "bg-[#0A3A72]/15"
-                        }`}
-                      />
-                    ))}
-                  </div>
-
-                  <div className="mt-5 flex items-start justify-between gap-3">
-                    <h2 className="text-lg font-bold leading-tight tracking-[-0.02em]">
-                      {currentGuidedTrialStep.title}
-                    </h2>
-                    <span
-                      role="status"
-                      aria-live="polite"
-                      className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold ${
-                        currentGuidedTrialDetected
-                          ? "border-[#91a889]/30 bg-[#91a889]/12 text-[#91a889]"
-                          : isDarkTheme
-                            ? "border-white/10 text-white/45"
-                            : "border-stone-200 text-stone-500"
-                      }`}
-                    >
-                      {currentGuidedTrialDetected ? "Detected" : "Try it"}
-                    </span>
-                  </div>
-                  <p className={`mt-3 text-sm leading-6 ${quietTextClass}`}>
-                    {currentGuidedTrialStep.instruction}
-                  </p>
-                  <div
-                    className={`mt-4 border-l-2 pl-3 text-xs leading-5 ${
-                      isDarkTheme
-                        ? "border-white/20 text-white/60"
-                        : "border-[#0A3A72]/30 text-stone-600"
-                    }`}
-                  >
-                    <span className="font-semibold">Watch for: </span>
-                    {currentGuidedTrialStep.expected}
-                  </div>
-
-                  <div className="mt-6 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setGuidedTrialStepIndex((index) => Math.max(0, index - 1))
-                      }
-                      disabled={guidedTrialStepIndex === 0}
-                      className={`min-h-10 rounded-xl border px-3 text-xs font-semibold transition-colors ${
-                        guidedTrialStepIndex === 0
-                          ? "cursor-not-allowed opacity-35"
-                          : isDarkTheme
-                            ? "border-white/15 text-white/75 hover:bg-white/10"
-                            : "border-stone-200 text-stone-600 hover:bg-stone-100"
-                      }`}
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (
-                          guidedTrialStepIndex ===
-                          GUIDED_TRIAL_STEPS.length - 1
-                        ) {
-                          finishGuidedTrial();
-                          return;
-                        }
-                        setGuidedTrialStepIndex((index) => index + 1);
-                      }}
-                      className={`min-h-10 rounded-xl px-3 text-xs font-semibold ${primaryButtonClass}`}
-                    >
-                      {guidedTrialStepIndex === GUIDED_TRIAL_STEPS.length - 1
-                        ? "Finish tutorial"
-                        : "Next"}
-                    </button>
-                  </div>
-                </aside>
+                <TutorialOverlay
+                  step={currentGuidedTrialStep}
+                  stepIndex={guidedTrialStepIndex}
+                  stepCount={GUIDED_TRIAL_STEPS.length}
+                  detected={currentGuidedTrialDetected}
+                  floatingWindowSupported={floatingWindowSupported}
+                  isDarkTheme={isDarkTheme}
+                  onPrevious={goToPreviousGuidedTrialStep}
+                  onNext={goToNextGuidedTrialStep}
+                  onClose={finishGuidedTrial}
+                />
               ) : null}
 
               <div
@@ -4396,7 +4335,7 @@ function DesktopApp() {
                         className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
                       >
                         <Activity size={16} aria-hidden="true" />
-                        Interactive Tutorial
+                        Tutorial
                       </div>
                       <p className={`mt-1 text-[11px] leading-relaxed ${mutedTextClass}`}>
                         Follow live steps and see how Uprightly responds.
@@ -4411,7 +4350,7 @@ function DesktopApp() {
                           : "border-[#0A3A72]/20 bg-white text-[#0A3A72] hover:bg-[#eef4fa]"
                       }`}
                     >
-                      Start Interactive Tutorial
+                      Start Tutorial
                     </button>
                   </section>
 
@@ -4989,8 +4928,8 @@ function DesktopApp() {
               <button
                 onClick={closeTutorial}
                 className={`flex h-11 w-11 items-center justify-center rounded-full border transition-colors ${isDarkTheme ? "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white" : "border-[#ded8cc] bg-white text-[#6f6a61] hover:bg-[#f2efe7] hover:text-[#1c1b19]"}`}
-                aria-label="Close tutorial"
-                title="Skip tutorial"
+                aria-label="Close quick tour"
+                title="Skip quick tour"
               >
                 <X size={18} aria-hidden="true" />
               </button>
@@ -5031,7 +4970,7 @@ function DesktopApp() {
             </p>
 
             <div className="mt-4 flex items-center justify-center">
-              <div className="flex items-center" aria-label="Tutorial progress">
+              <div className="flex items-center" aria-label="Quick tour progress">
                 {TUTORIAL_STEPS.map((step, index) => (
                   <button
                     key={step.target}
@@ -5082,7 +5021,7 @@ function DesktopApp() {
             </div>
 
             <div className="sr-only" aria-live="polite" aria-atomic="true">
-              Tutorial step {tutorialStepIndex + 1} of {TUTORIAL_STEPS.length}: {currentTutorialStep.title}
+              Quick tour step {tutorialStepIndex + 1} of {TUTORIAL_STEPS.length}: {currentTutorialStep.title}
             </div>
           </div>
         </div>

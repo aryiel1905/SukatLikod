@@ -82,21 +82,104 @@ test("privacy policy can be revisited from settings", async ({ page }) => {
   await expect(policy).toBeHidden();
 });
 
-test("interactive tutorial is available without an introduction dialog", async ({
+test("tutorial is available without an introduction dialog", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(
-    page.getByRole("button", { name: "Interactive Tutorial" }).first(),
+    page.getByRole("button", { name: "Tutorial" }).first(),
   ).toBeVisible();
   await page.getByRole("button", { name: "Open settings" }).click();
   await expect(
-    page.getByRole("button", { name: "Start Interactive Tutorial" }),
+    page.getByRole("button", { name: "Start Tutorial" }),
   ).toBeVisible();
   await expect(
     page.getByRole("dialog", { name: "Try a guided posture check" }),
   ).toHaveCount(0);
+});
+
+test("full-card posture tutorial opens with the camera and supports keyboard navigation", async ({
+  page,
+}) => {
+  test.slow();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.context().grantPermissions(["camera"], {
+    origin: "http://127.0.0.1:43817",
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Tutorial", exact: true }).click();
+
+  const overlay = page.getByTestId("tutorial-overlay");
+  await expect(overlay).toBeVisible({ timeout: 90_000 });
+  await expect(overlay.getByText("Step 1 of 6")).toBeVisible();
+  await expect(overlay.locator('[data-tutorial-visual="baseline"]')).toBeVisible();
+  await expect(
+    overlay.getByRole("img", {
+      name: "Person sitting upright and centered inside the camera frame",
+    }),
+  ).toHaveAttribute("src", "/tutorial/uprightly-step-1.png");
+  await expect(overlay.getByText("Waiting for movement")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open settings" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open activity" })).toBeHidden();
+
+  const stageBox = await page.locator('[data-tour="camera-stage"]').boundingBox();
+  const overlayBox = await overlay.boundingBox();
+  expect(stageBox).not.toBeNull();
+  expect(overlayBox).not.toBeNull();
+  expect(Math.abs((overlayBox?.x ?? 0) - (stageBox?.x ?? 0))).toBeLessThanOrEqual(2);
+  expect(Math.abs((overlayBox?.y ?? 0) - (stageBox?.y ?? 0))).toBeLessThanOrEqual(2);
+  expect(Math.abs((overlayBox?.width ?? 0) - (stageBox?.width ?? 0))).toBeLessThanOrEqual(4);
+  expect(Math.abs((overlayBox?.height ?? 0) - (stageBox?.height ?? 0))).toBeLessThanOrEqual(4);
+
+  await page.keyboard.press("ArrowRight");
+  await expect(overlay.getByText("Step 2 of 6")).toBeVisible();
+  await expect(overlay.locator('[data-tutorial-visual="forward"]')).toBeVisible();
+  await expect(
+    overlay.getByRole("img", {
+      name: "Person gently leaning forward from an upright position",
+    }),
+  ).toHaveAttribute("src", "/tutorial/uprightly-step-2.png");
+
+  await page.keyboard.press("Space");
+  await expect(overlay.getByText("Step 3 of 6")).toBeVisible();
+  await expect(
+    overlay.getByRole("img", {
+      name: "Person raising one shoulder while remaining centered",
+    }),
+  ).toHaveAttribute("src", "/tutorial/uprightly-step-3.png");
+
+  await page.keyboard.press("ArrowRight");
+  await expect(overlay.getByText("Step 4 of 6")).toBeVisible();
+  await expect(
+    overlay.getByRole("img", {
+      name: "Person moving partly outside the camera frame",
+    }),
+  ).toHaveAttribute("src", "/tutorial/uprightly-step-4.png");
+
+  await page.keyboard.press("ArrowRight");
+  await expect(overlay.getByText("Step 5 of 6")).toBeVisible();
+  await expect(
+    overlay.getByRole("img", {
+      name: "Person returning to a centered upright posture",
+    }),
+  ).toHaveAttribute("src", "/tutorial/uprightly-step-5.png");
+
+  await page.keyboard.press("ArrowRight");
+  await expect(overlay.getByText("Step 6 of 6")).toBeVisible();
+  await expect(overlay.locator('[data-tutorial-visual="floating"]')).toBeVisible();
+  await expect(
+    overlay.getByRole("button", { name: "Finish Tutorial" }),
+  ).toBeVisible();
+  await overlay.getByRole("button", { name: "Finish Tutorial" }).click();
+  await expect(overlay).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Tutorial", exact: true }).click();
+  await expect(overlay).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
 });
 
 test("mobile shows only the computer compatibility notice", async ({
