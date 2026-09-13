@@ -3,15 +3,20 @@ import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }, testInfo) => {
   const acknowledgePrivacy = !testInfo.title.startsWith("first visit");
-  await page.addInitScript((shouldAcknowledgePrivacy) => {
-    window.localStorage.setItem("uprightly-tutorial-seen", "true");
+  const showQuickTour = testInfo.title.startsWith("tutorial");
+  await page.addInitScript(({ shouldAcknowledgePrivacy, shouldShowQuickTour }) => {
+    if (shouldShowQuickTour) {
+      window.localStorage.removeItem("uprightly-tutorial-seen");
+    } else {
+      window.localStorage.setItem("uprightly-tutorial-seen", "true");
+    }
     window.localStorage.setItem("uprightly-guided-trial-seen-v1", "true");
     if (shouldAcknowledgePrivacy) {
       window.localStorage.setItem("uprightly-privacy-notice", "2");
     } else {
       window.localStorage.removeItem("uprightly-privacy-notice");
     }
-  }, acknowledgePrivacy);
+  }, { shouldAcknowledgePrivacy: acknowledgePrivacy, shouldShowQuickTour: showQuickTour });
 });
 
 test("first visit explains camera privacy and remembers an explicit choice", async ({
@@ -77,26 +82,21 @@ test("privacy policy can be revisited from settings", async ({ page }) => {
   await expect(policy).toBeHidden();
 });
 
-test("guided posture check can be reviewed from settings", async ({ page }) => {
+test("interactive tutorial is available without an introduction dialog", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByRole("button", { name: "Run guided trial" }).click();
-
-  const trialIntro = page.getByRole("dialog", {
-    name: "Try a guided posture check",
-  });
-  await expect(trialIntro).toBeVisible();
   await expect(
-    trialIntro.getByText("forward posture, shoulder alignment", {
-      exact: false,
-    }),
+    page.getByRole("button", { name: "Interactive Tutorial" }).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await expect(
+    page.getByRole("button", { name: "Start Interactive Tutorial" }),
   ).toBeVisible();
   await expect(
-    trialIntro.getByRole("button", { name: "Start session and begin" }),
-  ).toBeFocused();
-  await trialIntro.getByRole("button", { name: "Not now" }).click();
-  await expect(trialIntro).toBeHidden();
+    page.getByRole("dialog", { name: "Try a guided posture check" }),
+  ).toHaveCount(0);
 });
 
 test("mobile shows only the computer compatibility notice", async ({
@@ -386,8 +386,6 @@ test("tutorial keyboard controls take precedence over the session shortcut", asy
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  const tutorialLauncher = page.getByRole("button", { name: "Open Tutorial" });
-  await tutorialLauncher.click();
 
   const dialog = page.getByRole("dialog", { name: "Begin when you're ready" });
   await expect(dialog).toBeVisible();
@@ -413,7 +411,7 @@ test("tutorial keyboard controls take precedence over the session shortcut", asy
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  await expect(tutorialLauncher).toBeFocused();
+  await expect(page.getByRole("button", { name: "Start Session" }).first()).toBeVisible();
 });
 
 test("tutorial remains within constrained viewports", async ({ page }) => {
@@ -426,8 +424,6 @@ test("tutorial remains within constrained viewports", async ({ page }) => {
   for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-
-    await page.getByRole("button", { name: "Open Tutorial" }).click();
 
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -447,7 +443,6 @@ test("tutorial remains within constrained viewports", async ({ page }) => {
 test("tutorial leaves editable settings controls usable", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Open Tutorial" }).click();
   await page.getByRole("button", { name: "Go to tutorial step 5" }).click();
 
   const settingsSelect = page.getByRole("combobox");
