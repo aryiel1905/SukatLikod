@@ -4455,6 +4455,38 @@ function DesktopApp() {
                       <div
                         className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
                       >
+                        <Camera size={16} aria-hidden="true" />
+                        Capture lab
+                      </div>
+                      <p
+                        className={`mt-1 text-[11px] leading-relaxed ${mutedTextClass}`}
+                      >
+                        Take local photos with landmark nodes and exact values.
+                      </p>
+                    </div>
+                    <a
+                      href="/capture-lab"
+                      className={`flex min-h-10 w-full items-center justify-center rounded-xl border px-3.5 text-xs font-semibold transition-colors ${
+                        isDarkTheme
+                          ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+                          : "border-[#0A3A72]/20 bg-white text-[#0A3A72] hover:bg-[#eef4fa]"
+                      }`}
+                    >
+                      Open capture lab
+                    </a>
+                  </section>
+
+                  <section
+                    className={`space-y-3 rounded-2xl border p-4 ${
+                      isDarkTheme
+                        ? "border-white/8 bg-white/[0.025]"
+                        : "border-stone-200 bg-white/70"
+                    }`}
+                  >
+                    <div>
+                      <div
+                        className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
+                      >
                         <Activity size={16} aria-hidden="true" />
                         Guided posture check
                       </div>
