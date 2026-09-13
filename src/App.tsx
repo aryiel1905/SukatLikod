@@ -131,6 +131,19 @@ type TutorialStep = {
   title: string;
   body: string;
 };
+type GuidedTrialStepId =
+  | "baseline"
+  | "forward"
+  | "shoulders"
+  | "framing"
+  | "neutral"
+  | "floating";
+type GuidedTrialStep = {
+  id: GuidedTrialStepId;
+  title: string;
+  instruction: string;
+  expected: string;
+};
 type TutorialRect = {
   top: number;
   left: number;
@@ -201,6 +214,7 @@ const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
 const PRIVACY_NOTICE_STORAGE_KEY = "uprightly-privacy-notice";
 const FLOATING_WINDOW_STORAGE_KEY = "uprightly-auto-floating-window-v2";
+const GUIDED_TRIAL_STORAGE_KEY = "uprightly-guided-trial-seen-v1";
 const PRIVACY_NOTICE_VERSION = "2";
 const PRIVACY_POLICY_UPDATED = "September 12, 2026";
 const DEFAULT_SENSITIVITY: Sensitivity = {
@@ -249,6 +263,50 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     target: "settings-panel",
     title: "Tune the experience",
     body: "Choose your camera and theme, manage voice feedback, replay this tour, or keep status visible in a floating window.",
+  },
+];
+const GUIDED_TRIAL_STEPS: GuidedTrialStep[] = [
+  {
+    id: "baseline",
+    title: "Establish your starting posture",
+    instruction:
+      "Sit comfortably upright, face the camera, and keep your head and shoulders visible. Hold still for a few seconds.",
+    expected: "Tracking becomes stable and Uprightly establishes a reference.",
+  },
+  {
+    id: "forward",
+    title: "Try a gentle forward posture",
+    instruction:
+      "Move your head and upper body slightly forward, then hold that position briefly.",
+    expected: "Look for Bring your head back or Sit straighter.",
+  },
+  {
+    id: "shoulders",
+    title: "Change your shoulder alignment",
+    instruction:
+      "Gently raise or lower one shoulder while keeping both shoulders visible.",
+    expected: "Look for Level your shoulders.",
+  },
+  {
+    id: "framing",
+    title: "Test camera framing",
+    instruction:
+      "Turn slightly away or move one shoulder partly outside the camera frame.",
+    expected: "Uprightly asks you to face the camera or keep both shoulders visible.",
+  },
+  {
+    id: "neutral",
+    title: "Return to neutral",
+    instruction:
+      "Return to your original comfortable upright position and hold still.",
+    expected: "The score and guidance recover after the reading stabilizes.",
+  },
+  {
+    id: "floating",
+    title: "Work in another tab",
+    instruction:
+      "Switch to another tab or application while the session remains active, then return here.",
+    expected: "On supported browsers, the floating posture status appears.",
   },
 ];
 
@@ -700,6 +758,7 @@ function DesktopApp() {
   const tutorialCardRef = useRef<HTMLDivElement | null>(null);
   const tutorialContentRef = useRef<HTMLDivElement | null>(null);
   const tutorialReturnFocusRef = useRef<HTMLElement | null>(null);
+  const guidedTrialIntroRef = useRef<HTMLDivElement | null>(null);
   const purposeNoticeRef = useRef<HTMLElement | null>(null);
   const privacyNoticeRef = useRef<HTMLElement | null>(null);
   const privacyPolicyRef = useRef<HTMLDivElement | null>(null);
@@ -807,6 +866,13 @@ function DesktopApp() {
     height: 320,
   });
   const [isCompactTutorial, setIsCompactTutorial] = useState(false);
+  const [showGuidedTrialIntro, setShowGuidedTrialIntro] = useState(false);
+  const [showGuidedTrial, setShowGuidedTrial] = useState(false);
+  const [guidedTrialPending, setGuidedTrialPending] = useState(false);
+  const [guidedTrialStepIndex, setGuidedTrialStepIndex] = useState(0);
+  const [completedGuidedTrialSteps, setCompletedGuidedTrialSteps] = useState<
+    Set<GuidedTrialStepId>
+  >(() => new Set());
   const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(() => {
     if (typeof window === "undefined") return true;
     return window.localStorage.getItem(FLOATING_WINDOW_STORAGE_KEY) !== "false";
@@ -2384,7 +2450,7 @@ function DesktopApp() {
     try {
       navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, () => {
         void openFloatingWindow("auto").catch((error) => {
-            console.error("Automatic floating window failed:", error);
+          console.error("Automatic floating window failed:", error);
         });
       });
     } catch (error) {
@@ -2428,6 +2494,172 @@ function DesktopApp() {
       window.removeEventListener("focus", closeAutomaticWindowOnReturn);
     };
   }, [closeFloatingWindow, floatingWindowEnabled, isActive]);
+
+  const beginGuidedTrial = useCallback(() => {
+    window.localStorage.setItem(GUIDED_TRIAL_STORAGE_KEY, "true");
+    setCompletedGuidedTrialSteps(new Set());
+    setGuidedTrialStepIndex(0);
+    setGuidedTrialPending(false);
+    setShowGuidedTrialIntro(false);
+    setShowGuidedTrial(true);
+    setShowSettings(false);
+    setShowSessionLog(false);
+  }, []);
+
+  const dismissGuidedTrialIntro = useCallback(() => {
+    window.localStorage.setItem(GUIDED_TRIAL_STORAGE_KEY, "true");
+    setGuidedTrialPending(false);
+    setShowGuidedTrialIntro(false);
+  }, []);
+
+  const finishGuidedTrial = useCallback(() => {
+    window.localStorage.setItem(GUIDED_TRIAL_STORAGE_KEY, "true");
+    setShowGuidedTrial(false);
+  }, []);
+
+  const requestGuidedTrial = useCallback(() => {
+    setGuidedTrialPending(false);
+    setShowSettings(false);
+    setShowSessionLog(false);
+    setShowGuidedTrial(false);
+    setShowGuidedTrialIntro(true);
+  }, []);
+
+  const confirmGuidedTrial = useCallback(() => {
+    if (isActive) {
+      beginGuidedTrial();
+      return;
+    }
+
+    setGuidedTrialPending(true);
+    setShowGuidedTrialIntro(false);
+    void start();
+  }, [beginGuidedTrial, isActive, start]);
+
+  useEffect(() => {
+    if (
+      !isActive ||
+      trackingHealth < 45 ||
+      showTutorial ||
+      showPrivacyNotice ||
+      showPrivacyPolicy ||
+      showGuidedTrial ||
+      showGuidedTrialIntro ||
+      window.localStorage.getItem(GUIDED_TRIAL_STORAGE_KEY) === "true"
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setShowGuidedTrialIntro(true), 650);
+    return () => window.clearTimeout(timer);
+  }, [
+    isActive,
+    showGuidedTrial,
+    showGuidedTrialIntro,
+    showPrivacyNotice,
+    showPrivacyPolicy,
+    showTutorial,
+    trackingHealth,
+  ]);
+
+  useEffect(() => {
+    if (!guidedTrialPending) return;
+
+    if (pill === "error") {
+      const errorTimer = window.setTimeout(() => {
+        setGuidedTrialPending(false);
+        setShowGuidedTrialIntro(true);
+      }, 0);
+      return () => window.clearTimeout(errorTimer);
+    }
+
+    if (!isActive || trackingHealth < 45) return;
+    const readyTimer = window.setTimeout(beginGuidedTrial, 350);
+    return () => window.clearTimeout(readyTimer);
+  }, [
+    beginGuidedTrial,
+    guidedTrialPending,
+    isActive,
+    pill,
+    trackingHealth,
+  ]);
+
+  useEffect(() => {
+    if (!showGuidedTrial) return;
+    const stepId = GUIDED_TRIAL_STEPS[guidedTrialStepIndex]?.id;
+    if (!stepId || completedGuidedTrialSteps.has(stepId)) return;
+
+    const normalizedFeedback = feedback.toLowerCase();
+    const detected =
+      (stepId === "baseline" && trackingHealth >= 45) ||
+      (stepId === "forward" &&
+        (normalizedFeedback.includes("head back") ||
+          normalizedFeedback.includes("sit straighter"))) ||
+      (stepId === "shoulders" &&
+        normalizedFeedback.includes("level your shoulders")) ||
+      (stepId === "framing" &&
+        (normalizedFeedback.includes("face the camera") ||
+          normalizedFeedback.includes("shoulders in view") ||
+          normalizedFeedback.includes("shoulders visible"))) ||
+      (stepId === "neutral" && pill === "good" && score >= 80) ||
+      (stepId === "floating" && floatingWindowReady);
+
+    if (!detected) return;
+    const detectedTimer = window.setTimeout(() => {
+      setCompletedGuidedTrialSteps((completed) => {
+        const next = new Set(completed);
+        next.add(stepId);
+        return next;
+      });
+    }, 0);
+    return () => window.clearTimeout(detectedTimer);
+  }, [
+    completedGuidedTrialSteps,
+    feedback,
+    floatingWindowReady,
+    guidedTrialStepIndex,
+    pill,
+    score,
+    showGuidedTrial,
+    trackingHealth,
+  ]);
+
+  useEffect(() => {
+    if (!showGuidedTrialIntro) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      guidedTrialIntroRef.current
+        ?.querySelector<HTMLElement>("[data-guided-trial-autofocus]")
+        ?.focus();
+    });
+    const containGuidedTrialFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismissGuidedTrialIntro();
+        return;
+      }
+      if (event.key !== "Tab" || !guidedTrialIntroRef.current) return;
+      const focusable = Array.from(
+        guidedTrialIntroRef.current.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", containGuidedTrialFocus);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", containGuidedTrialFocus);
+    };
+  }, [dismissGuidedTrialIntro, showGuidedTrialIntro]);
 
   useEffect(() => {
     if (!mlApiUrl) {
@@ -2617,6 +2849,8 @@ function DesktopApp() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (
         showTutorial ||
+        showGuidedTrialIntro ||
+        showGuidedTrial ||
         showPrivacyNotice ||
         showPrivacyPolicy ||
         e.code !== "Space" ||
@@ -2648,6 +2882,8 @@ function DesktopApp() {
     pill,
     showPrivacyNotice,
     showPrivacyPolicy,
+    showGuidedTrial,
+    showGuidedTrialIntro,
     showTutorial,
     start,
     stop,
@@ -2714,6 +2950,10 @@ function DesktopApp() {
   );
 
   const currentTutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
+  const currentGuidedTrialStep = GUIDED_TRIAL_STEPS[guidedTrialStepIndex];
+  const currentGuidedTrialDetected = completedGuidedTrialSteps.has(
+    currentGuidedTrialStep.id,
+  );
 
   const closeTutorial = useCallback(() => {
     window.localStorage.setItem(TUTORIAL_SEEN_STORAGE_KEY, "true");
@@ -3384,6 +3624,129 @@ function DesktopApp() {
                     Camera Feed Inactive
                   </p>
                 </div>
+              ) : null}
+
+              {showGuidedTrial && isActive ? (
+                <aside
+                  aria-label="Guided posture check"
+                  className={`absolute right-5 top-5 z-30 w-[min(22rem,calc(100%-2.5rem))] overflow-hidden rounded-[1.5rem] border p-5 shadow-2xl backdrop-blur-2xl ${
+                    isDarkTheme
+                      ? "border-white/12 bg-[#171715]/95 text-[#f4f0e8]"
+                      : "border-[#cbdbea] bg-white/95 text-[#1c1b19]"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${mutedTextClass}`}>
+                        Guided posture check
+                      </p>
+                      <p className={`mt-1 text-xs ${mutedTextClass}`}>
+                        {guidedTrialStepIndex + 1} of {GUIDED_TRIAL_STEPS.length}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={finishGuidedTrial}
+                      aria-label="End guided trial"
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                        isDarkTheme
+                          ? "border-white/15 text-white/65 hover:bg-white/10 hover:text-white"
+                          : "border-stone-200 text-stone-500 hover:bg-stone-100 hover:text-stone-900"
+                      }`}
+                    >
+                      <X size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <div className="mt-4 flex gap-1.5" aria-label="Trial progress">
+                    {GUIDED_TRIAL_STEPS.map((step, index) => (
+                      <span
+                        key={step.id}
+                        className={`h-1.5 flex-1 rounded-full transition-colors ${
+                          index <= guidedTrialStepIndex
+                            ? isDarkTheme
+                              ? "bg-[#e8e7e2]"
+                              : "bg-[#0A3A72]"
+                            : isDarkTheme
+                              ? "bg-white/15"
+                              : "bg-[#0A3A72]/15"
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="mt-5 flex items-start justify-between gap-3">
+                    <h2 className="text-lg font-bold leading-tight tracking-[-0.02em]">
+                      {currentGuidedTrialStep.title}
+                    </h2>
+                    <span
+                      role="status"
+                      aria-live="polite"
+                      className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold ${
+                        currentGuidedTrialDetected
+                          ? "border-[#91a889]/30 bg-[#91a889]/12 text-[#91a889]"
+                          : isDarkTheme
+                            ? "border-white/10 text-white/45"
+                            : "border-stone-200 text-stone-500"
+                      }`}
+                    >
+                      {currentGuidedTrialDetected ? "Detected" : "Try it"}
+                    </span>
+                  </div>
+                  <p className={`mt-3 text-sm leading-6 ${quietTextClass}`}>
+                    {currentGuidedTrialStep.instruction}
+                  </p>
+                  <div
+                    className={`mt-4 border-l-2 pl-3 text-xs leading-5 ${
+                      isDarkTheme
+                        ? "border-white/20 text-white/60"
+                        : "border-[#0A3A72]/30 text-stone-600"
+                    }`}
+                  >
+                    <span className="font-semibold">Expected: </span>
+                    {currentGuidedTrialStep.expected}
+                  </div>
+                  <p className={`mt-4 text-[11px] leading-4 ${mutedTextClass}`}>
+                    Use only gentle movements. Stop if anything feels uncomfortable.
+                  </p>
+
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGuidedTrialStepIndex((index) => Math.max(0, index - 1))
+                      }
+                      disabled={guidedTrialStepIndex === 0}
+                      className={`min-h-10 rounded-xl border px-3 text-xs font-semibold transition-colors ${
+                        guidedTrialStepIndex === 0
+                          ? "cursor-not-allowed opacity-35"
+                          : isDarkTheme
+                            ? "border-white/15 text-white/75 hover:bg-white/10"
+                            : "border-stone-200 text-stone-600 hover:bg-stone-100"
+                      }`}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          guidedTrialStepIndex ===
+                          GUIDED_TRIAL_STEPS.length - 1
+                        ) {
+                          finishGuidedTrial();
+                          return;
+                        }
+                        setGuidedTrialStepIndex((index) => index + 1);
+                      }}
+                      className={`min-h-10 rounded-xl px-3 text-xs font-semibold ${primaryButtonClass}`}
+                    >
+                      {guidedTrialStepIndex === GUIDED_TRIAL_STEPS.length - 1
+                        ? "Finish trial"
+                        : "Next"}
+                    </button>
+                  </div>
+                </aside>
               ) : null}
 
               <div
@@ -4092,6 +4455,37 @@ function DesktopApp() {
                       <div
                         className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
                       >
+                        <Activity size={16} aria-hidden="true" />
+                        Guided posture check
+                      </div>
+                      <p className={`mt-1 text-[11px] leading-relaxed ${mutedTextClass}`}>
+                        Try each posture signal and see how Uprightly responds.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={requestGuidedTrial}
+                      className={`flex min-h-10 w-full items-center justify-center rounded-xl border px-3.5 text-xs font-semibold transition-colors ${
+                        isDarkTheme
+                          ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+                          : "border-[#0A3A72]/20 bg-white text-[#0A3A72] hover:bg-[#eef4fa]"
+                      }`}
+                    >
+                      Run guided trial
+                    </button>
+                  </section>
+
+                  <section
+                    className={`space-y-3 rounded-2xl border p-4 ${
+                      isDarkTheme
+                        ? "border-white/8 bg-white/[0.025]"
+                        : "border-stone-200 bg-white/70"
+                    }`}
+                  >
+                    <div>
+                      <div
+                        className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
+                      >
                         <ShieldCheck size={16} aria-hidden="true" />
                         Privacy &amp; data
                       </div>
@@ -4250,6 +4644,84 @@ function DesktopApp() {
             floatingRootRef.current,
           )
         : null}
+
+      {showGuidedTrialIntro &&
+      !showPrivacyNotice &&
+      !showPrivacyPolicy &&
+      !showTutorial ? (
+        <div
+          className={`fixed inset-0 z-[65] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
+        >
+          <div
+            ref={guidedTrialIntroRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="guided-trial-intro-title"
+            aria-describedby="guided-trial-intro-description"
+            className={`w-full max-w-lg rounded-[1.75rem] border p-6 shadow-[0_28px_90px_-28px_rgba(0,0,0,0.7)] sm:p-8 ${
+              isDarkTheme
+                ? "border-white/12 bg-[#171715] text-[#f4f0e8]"
+                : "border-[#cbdbea] bg-white text-[#1c1b19]"
+            }`}
+          >
+            <p className={`text-xs font-semibold uppercase tracking-[0.16em] ${mutedTextClass}`}>
+              First-session practice
+            </p>
+            <h2
+              id="guided-trial-intro-title"
+              className="mt-3 text-3xl font-bold tracking-[-0.035em]"
+            >
+              Try a guided posture check
+            </h2>
+            <p
+              id="guided-trial-intro-description"
+              className={`mt-4 text-sm leading-6 ${quietTextClass}`}
+            >
+              Start from a comfortable upright position. Uprightly will guide
+              you through gentle posture and framing changes so you can see how
+              its feedback responds.
+            </p>
+            <div
+              className={`mt-5 border-y py-4 text-xs leading-5 ${
+                isDarkTheme
+                  ? "border-white/10 text-white/60"
+                  : "border-[#0A3A72]/15 text-stone-600"
+              }`}
+            >
+              The check covers forward posture, shoulder alignment, camera
+              framing, recovery, and the floating status window. It is guidance
+              only, not a medical assessment.
+            </div>
+            {!isActive ? (
+              <p className={`mt-4 text-xs ${mutedTextClass}`}>
+                Your camera will start after you continue and request permission
+                if needed.
+              </p>
+            ) : null}
+            <div className="mt-6 grid gap-2 sm:grid-cols-[auto_1fr]">
+              <button
+                type="button"
+                onClick={dismissGuidedTrialIntro}
+                className={`min-h-11 rounded-xl border px-5 py-2.5 text-sm font-semibold transition-colors ${
+                  isDarkTheme
+                    ? "border-white/15 text-white/70 hover:bg-white/10 hover:text-white"
+                    : "border-stone-200 text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+                }`}
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                data-guided-trial-autofocus
+                onClick={confirmGuidedTrial}
+                className={`min-h-11 rounded-xl px-5 py-2.5 text-sm font-semibold ${primaryButtonClass}`}
+              >
+                {isActive ? "Start guided check" : "Start session and begin"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showPrivacyNotice &&
       !showPrivacyPolicy &&

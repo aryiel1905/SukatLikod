@@ -5,6 +5,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   const acknowledgePrivacy = !testInfo.title.startsWith("first visit");
   await page.addInitScript((shouldAcknowledgePrivacy) => {
     window.localStorage.setItem("uprightly-tutorial-seen", "true");
+    window.localStorage.setItem("uprightly-guided-trial-seen-v1", "true");
     if (shouldAcknowledgePrivacy) {
       window.localStorage.setItem("uprightly-privacy-notice", "2");
     } else {
@@ -74,6 +75,28 @@ test("privacy policy can be revisited from settings", async ({ page }) => {
 
   await policy.getByRole("button", { name: "Close privacy policy" }).click();
   await expect(policy).toBeHidden();
+});
+
+test("guided posture check can be reviewed from settings", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByRole("button", { name: "Run guided trial" }).click();
+
+  const trialIntro = page.getByRole("dialog", {
+    name: "Try a guided posture check",
+  });
+  await expect(trialIntro).toBeVisible();
+  await expect(
+    trialIntro.getByText("forward posture, shoulder alignment", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    trialIntro.getByRole("button", { name: "Start session and begin" }),
+  ).toBeFocused();
+  await trialIntro.getByRole("button", { name: "Not now" }).click();
+  await expect(trialIntro).toBeHidden();
 });
 
 test("mobile shows only the computer compatibility notice", async ({
