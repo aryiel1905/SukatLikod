@@ -16,8 +16,6 @@ import {
   Activity,
   AlertCircle,
   CheckCircle2,
-  ChevronRight,
-  Maximize2,
   Bell,
   X,
   PanelRightOpen,
@@ -34,7 +32,8 @@ import type {
   PoseLandmarker,
   PoseLandmarkerResult,
 } from "@mediapipe/tasks-vision";
-import { MetricCard } from "./components/MetricCard";
+import { PostureStateCard } from "./components/PostureStateCard";
+import { PostureScoreCard } from "./components/PostureScoreCard";
 import {
   TutorialOverlay,
   type TutorialOverlayStep,
@@ -43,10 +42,10 @@ import {
 import {
   average as avg,
   clamp,
-  metricQuality,
   stabilityFromVariance,
   variance,
 } from "./features/posture/math";
+import { resolvePostureState } from "./features/posture/postureState";
 import "./features/settings/settings-scroll.css";
 
 gsap.registerPlugin(useGSAP);
@@ -203,7 +202,6 @@ const CHIN_LIFT_PROXY_THRESHOLD = 0.95;
 const CHIN_LIFT_PROXY_SEVERE = 1.15;
 const UPPER_FRONT_TRACKING_MIN = 62;
 const UPPER_FRONT_FRAME_MARGIN = 0.08;
-const UPPER_FRONT_SCORE_CAP = 86;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
 const PRIVACY_NOTICE_STORAGE_KEY = "uprightly-privacy-notice";
@@ -888,12 +886,12 @@ function DesktopApp() {
   const [feedback, setFeedback] = useState("Press Start Session to begin.");
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
 
-  const [metrics, setMetrics] = useState({
+  const [, setMetrics] = useState({
     trunkAngle: 0,
     headForward: 0,
     shoulderTilt: 0,
   });
-  const [signedMetrics, setSignedMetrics] = useState({
+  const [, setSignedMetrics] = useState({
     trunkAngle: 0,
     headForward: 0,
     shoulderTilt: 0,
@@ -906,7 +904,7 @@ function DesktopApp() {
   const [availableVoices, setAvailableVoices] = useState(0);
   const [cameraDevices, setCameraDevices] = useState<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
-  const [assessmentTier, setAssessmentTier] = useState<FrontCaptureTier | null>(
+  const [, setAssessmentTier] = useState<FrontCaptureTier | null>(
     null,
   );
   const [, setDebugMetrics] = useState<DebugMetrics>(DEFAULT_DEBUG_METRICS);
@@ -1989,10 +1987,7 @@ function DesktopApp() {
         return;
       }
 
-      const nextScore =
-        captureTier === "upper_front"
-          ? Math.min(d.score ?? 0, UPPER_FRONT_SCORE_CAP)
-          : (d.score ?? 0);
+      const nextScore = d.score ?? 0;
       const votedOk = applyPredictionVote(d.ok);
       const stablePresentation = getFeedbackPresentation(
         nextScore,
@@ -2060,7 +2055,6 @@ function DesktopApp() {
 
           const mlOk = pred.label === "proper";
           const votedMlOk = applyPredictionVote(mlOk);
-          const mlScore = Math.round(clamp(pred.confidence * 100, 0, 100));
           const mlMsg =
             pred.feedback ||
             (mlOk ? "Good posture - keep it." : "Needs correction.");
@@ -2071,7 +2065,7 @@ function DesktopApp() {
             d.sRatio <= 1;
           const localBlocksMl = !d.ok && !headOnlyLocalWarning;
           const finalOk = localBlocksMl ? false : votedMlOk;
-          const finalScore = finalOk ? Math.min(nextScore, mlScore) : nextScore;
+          const finalScore = nextScore;
           const finalMsg = finalOk ? mlMsg : localBlocksMl ? d.msg : mlMsg;
           const finalDominant = finalOk || mlOk ? null : d.dominant;
           const finalPresentation = getFeedbackPresentation(
@@ -3182,42 +3176,11 @@ function DesktopApp() {
     },
   );
 
-  const getScoreColor = (s: number) => {
-    if (s > 80) return "text-[#91a889]";
-    if (s > 60) return "text-amber-400";
-    return "text-rose-400";
-  };
-  const metricMeta =
-    assessmentTier === "upper_front"
-      ? {
-          trunk: { label: "Head Offset", unit: "norm" },
-          head: { label: "Head Lean", unit: "norm" },
-          shoulder: { label: "Shoulder Level", unit: "norm" },
-          thresholds: {
-            trunk: UPPER_FRONT_HEAD_OFFSET_THRESHOLD,
-            head: UPPER_FRONT_FORWARD_LEAN_THRESHOLD,
-            shoulder: UPPER_FRONT_SHOULDER_TILT_THRESHOLD,
-          },
-        }
-      : {
-          trunk: { label: "Trunk Angle", unit: "deg" },
-          head: { label: "Head Forward", unit: "m" },
-          shoulder: { label: "Shoulder Tilt", unit: "m" },
-          thresholds: {
-            trunk: sensitivity.trunkAngle,
-            head: sensitivity.headDistance,
-            shoulder: sensitivity.shoulderTilt,
-          },
-        };
-
   const isLoading = pill === "loading";
   const isDarkTheme = theme === "dark";
   const shellClass = isDarkTheme
     ? "uprightly-shell-dark bg-[#10100f] text-[#f4f0e8]"
     : "uprightly-shell-light bg-[#f2efe7] text-[#1c1b19]";
-  const heroCardClass = isDarkTheme
-    ? "bg-gradient-to-br from-white/[0.08] to-transparent border-white/10 hover:bg-white/[0.08]"
-    : "bg-gradient-to-br from-white to-stone-50 border-stone-200 hover:bg-white";
   const stageClass = isDarkTheme
     ? "bg-[#151412] border-white/8"
     : isActive
@@ -3263,6 +3226,26 @@ function DesktopApp() {
 
   const metricsPaused =
     !isActive || pill === "detecting" || trackingHealth < 45;
+
+  const postureDisplayState = resolvePostureState({
+    status: pill,
+    isActive,
+    metricsPaused,
+    score,
+  });
+
+  const postureStateMessage =
+    postureDisplayState === "inactive"
+      ? "Start monitoring to see your current alignment."
+      : postureDisplayState === "analyzing"
+        ? isLoading
+          ? "Preparing the camera and posture tracking."
+          : "Keep your head and shoulders visible, then hold still."
+        : postureDisplayState === "neutral"
+          ? "Your head and shoulders appear balanced."
+          : postureDisplayState === "unavailable"
+            ? "Check camera permission, then try starting again."
+            : feedback;
 
   const autoPipStatusLabel =
     autoPipStatus === "supported"
@@ -3424,115 +3407,17 @@ function DesktopApp() {
               Tutorial
             </button>
 
-            <div className="uprightly-desktop-metrics mt-auto flex min-h-0 flex-col gap-4">
-              <div
-                data-tour="posture-score"
-                className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
-              >
-                <div
-                  className={`flex items-center justify-between mb-1 z-10 ${subtleTextClass}`}
-                >
-                  <span className="text-xs font-medium tracking-wide">
-                    Posture Score
-                  </span>
-                  {score > 70 ? (
-                    <CheckCircle2 size={14} className="text-[#91a889]" />
-                  ) : (
-                    <AlertCircle
-                      size={14}
-                      className={isDarkTheme ? "text-white" : "text-stone-600"}
-                    />
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between mt-1 z-10">
-                  <div className="flex items-baseline gap-1">
-                    <span
-                      className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}
-                    >
-                      {score}
-                    </span>
-                    <span className={`text-xs font-medium ${mutedTextClass}`}>
-                      / 100
-                    </span>
-                  </div>
-                </div>
-
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none">
-                  <svg className="w-20 h-20 transform -rotate-90">
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r="33"
-                      stroke="currentColor"
-                      strokeWidth="8"
-                      fill="transparent"
-                      className={
-                        isDarkTheme ? "text-white/10" : "text-stone-200"
-                      }
-                    />
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r="33"
-                      stroke="currentColor"
-                      strokeWidth="8"
-                      fill="transparent"
-                      strokeDasharray={207.3}
-                      strokeDashoffset={207.3 - (207.3 * score) / 100}
-                      className={`${getScoreColor(score)} transition-all duration-1000 ease-out`}
-                    />
-                  </svg>
-                </div>
-              </div>
-
-              <MetricCard
+            <div className="uprightly-desktop-metrics mt-auto grid min-h-0 grid-flow-dense grid-cols-1 grid-rows-2 gap-4">
+              <PostureScoreCard
+                score={score}
                 paused={metricsPaused}
                 theme={theme}
-                label={metricMeta.trunk.label}
-                value={metrics.trunkAngle.toFixed(1)}
-                unit={metricMeta.trunk.unit}
-                icon={Activity}
-                variant="trunk"
-                rawValue={metrics.trunkAngle}
-                signedValue={signedMetrics.trunkAngle}
-                threshold={metricMeta.thresholds.trunk}
-                progress={metricQuality(
-                  metrics.trunkAngle,
-                  metricMeta.thresholds.trunk,
-                )}
               />
-              <MetricCard
-                paused={metricsPaused}
+
+              <PostureStateCard
+                state={postureDisplayState}
+                message={postureStateMessage}
                 theme={theme}
-                label={metricMeta.head.label}
-                value={metrics.headForward.toFixed(2)}
-                unit={metricMeta.head.unit}
-                icon={ChevronRight}
-                variant="head"
-                rawValue={metrics.headForward}
-                signedValue={signedMetrics.headForward}
-                threshold={metricMeta.thresholds.head}
-                progress={metricQuality(
-                  metrics.headForward,
-                  metricMeta.thresholds.head,
-                )}
-              />
-              <MetricCard
-                paused={metricsPaused}
-                theme={theme}
-                label={metricMeta.shoulder.label}
-                value={metrics.shoulderTilt.toFixed(2)}
-                unit={metricMeta.shoulder.unit}
-                icon={Maximize2}
-                variant="shoulder"
-                rawValue={metrics.shoulderTilt}
-                signedValue={signedMetrics.shoulderTilt}
-                threshold={metricMeta.thresholds.shoulder}
-                progress={metricQuality(
-                  metrics.shoulderTilt,
-                  metricMeta.thresholds.shoulder,
-                )}
               />
             </div>
           </aside>
@@ -4404,109 +4289,16 @@ function DesktopApp() {
         </div>
 
         <div className="grid flex-shrink-0 grid-flow-dense grid-cols-2 gap-3 lg:hidden">
-          <div
-            data-tour="posture-score"
-            className={`backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-1 transition-all relative overflow-hidden group ${heroCardClass}`}
-          >
-            <div
-              className={`flex items-center justify-between z-10 ${subtleTextClass}`}
-            >
-              <span className="text-xs font-medium tracking-wide">
-                Posture Score
-              </span>
-              {score > 70 ? (
-                <CheckCircle2 size={14} className="text-[#91a889]" />
-              ) : (
-                <AlertCircle size={14} className="text-amber-400" />
-              )}
-            </div>
-
-            <div className="flex items-center justify-between mt-1 z-10">
-              <div className="flex items-baseline gap-1">
-                <span
-                  className={`text-3xl font-black tracking-tight ${getScoreColor(score)}`}
-                >
-                  {score}
-                </span>
-                <span className={`text-xs font-medium ${mutedTextClass}`}>
-                  / 100
-                </span>
-              </div>
-            </div>
-
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none">
-              <svg className="w-20 h-20 transform -rotate-90">
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="33"
-                  stroke="currentColor"
-                  strokeWidth="8"
-                  fill="transparent"
-                  className={isDarkTheme ? "text-white/10" : "text-stone-200"}
-                />
-                <circle
-                  cx="40"
-                  cy="40"
-                  r="33"
-                  stroke="currentColor"
-                  strokeWidth="8"
-                  fill="transparent"
-                  strokeDasharray={207.3}
-                  strokeDashoffset={207.3 - (207.3 * score) / 100}
-                  className={`${getScoreColor(score)} transition-all duration-1000 ease-out`}
-                />
-              </svg>
-            </div>
-          </div>
-
-          <MetricCard
+          <PostureScoreCard
+            score={score}
             paused={metricsPaused}
             theme={theme}
-            label={metricMeta.trunk.label}
-            value={metrics.trunkAngle.toFixed(1)}
-            unit={metricMeta.trunk.unit}
-            icon={Activity}
-            variant="trunk"
-            rawValue={metrics.trunkAngle}
-            signedValue={signedMetrics.trunkAngle}
-            threshold={metricMeta.thresholds.trunk}
-            progress={metricQuality(
-              metrics.trunkAngle,
-              metricMeta.thresholds.trunk,
-            )}
           />
-          <MetricCard
-            paused={metricsPaused}
+
+          <PostureStateCard
+            state={postureDisplayState}
+            message={postureStateMessage}
             theme={theme}
-            label={metricMeta.head.label}
-            value={metrics.headForward.toFixed(2)}
-            unit={metricMeta.head.unit}
-            icon={ChevronRight}
-            variant="head"
-            rawValue={metrics.headForward}
-            signedValue={signedMetrics.headForward}
-            threshold={metricMeta.thresholds.head}
-            progress={metricQuality(
-              metrics.headForward,
-              metricMeta.thresholds.head,
-            )}
-          />
-          <MetricCard
-            paused={metricsPaused}
-            theme={theme}
-            label={metricMeta.shoulder.label}
-            value={metrics.shoulderTilt.toFixed(2)}
-            unit={metricMeta.shoulder.unit}
-            icon={Maximize2}
-            variant="shoulder"
-            rawValue={metrics.shoulderTilt}
-            signedValue={signedMetrics.shoulderTilt}
-            threshold={metricMeta.thresholds.shoulder}
-            progress={metricQuality(
-              metrics.shoulderTilt,
-              metricMeta.thresholds.shoulder,
-            )}
           />
         </div>
       </div>
