@@ -22,10 +22,10 @@ test("first visit explains camera privacy and remembers an explicit choice", asy
   const purpose = page.getByRole("dialog", { name: "Welcome to Uprightly" });
   await expect(purpose).toBeVisible();
   await expect(
-    purpose.getByText("real-time posture guidance tool", { exact: false }),
+    purpose.getByText("Designed to work alongside you"),
   ).toBeVisible();
   await expect(
-    purpose.getByText("Guidance, not medical care"),
+    purpose.getByText("Posture guidance only—not medical advice."),
   ).toBeVisible();
   await purpose.getByRole("button", { name: "Continue to privacy" }).click();
 
@@ -36,12 +36,17 @@ test("first visit explains camera privacy and remembers an explicit choice", asy
   await expect(
     notice.getByText("It does not record, upload, or save video clips."),
   ).toBeVisible();
-  await expect(notice.getByRole("button", { name: "Continue" })).toBeFocused();
+  await expect(notice.locator(".lucide-shield-check")).toHaveCount(0);
+  await expect(
+    notice.getByRole("button", { name: "Continue to Uprightly" }),
+  ).toBeFocused();
 
   await notice
-    .getByRole("checkbox", { name: "Don't show this message again" })
+    .getByRole("checkbox", {
+      name: "Don't show these opening screens again",
+    })
     .check();
-  await notice.getByRole("button", { name: "Continue" }).click();
+  await notice.getByRole("button", { name: "Continue to Uprightly" }).click();
   await expect(notice).toBeHidden();
   await expect
     .poll(() =>
@@ -420,4 +425,8 @@ test("theme accents use neutral white in dark mode and approved navy in light mo
 
   await expect(primaryAction).toHaveCSS("background-color", "rgb(10, 58, 114)");
   await expect(primaryAction).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(page.locator('[data-tour="camera-stage"]')).toHaveCSS(
+    "background-color",
+    "rgb(238, 244, 250)",
+  );
 });

@@ -199,6 +199,7 @@ const UPPER_FRONT_SCORE_CAP = 86;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
 const PRIVACY_NOTICE_STORAGE_KEY = "uprightly-privacy-notice";
+const FLOATING_WINDOW_STORAGE_KEY = "uprightly-auto-floating-window";
 const PRIVACY_NOTICE_VERSION = "2";
 const PRIVACY_POLICY_UPDATED = "September 12, 2026";
 const DEFAULT_SENSITIVITY: Sensitivity = {
@@ -699,7 +700,8 @@ function DesktopApp() {
   const tutorialCardRef = useRef<HTMLDivElement | null>(null);
   const tutorialContentRef = useRef<HTMLDivElement | null>(null);
   const tutorialReturnFocusRef = useRef<HTMLElement | null>(null);
-  const privacyNoticeRef = useRef<HTMLDivElement | null>(null);
+  const purposeNoticeRef = useRef<HTMLElement | null>(null);
+  const privacyNoticeRef = useRef<HTMLElement | null>(null);
   const privacyPolicyRef = useRef<HTMLDivElement | null>(null);
   const privacyReturnFocusRef = useRef<HTMLElement | null>(null);
   const tutorialPanelStateRef = useRef({
@@ -735,6 +737,7 @@ function DesktopApp() {
   const floatingWindowRef = useRef<Window | null>(null);
   const floatingRootRef = useRef<HTMLDivElement | null>(null);
   const autoFloatingWindowRef = useRef(false);
+  const floatingWindowPointerTimerRef = useRef<number | null>(null);
   const emaRef = useRef<{
     trunk: number | null;
     head: number | null;
@@ -803,7 +806,10 @@ function DesktopApp() {
     height: 320,
   });
   const [isCompactTutorial, setIsCompactTutorial] = useState(false);
-  const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(false);
+  const [floatingWindowEnabled, setFloatingWindowEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(FLOATING_WINDOW_STORAGE_KEY) === "true";
+  });
   const [floatingWindowReady, setFloatingWindowReady] = useState(false);
   const [autoPipStatus, setAutoPipStatus] =
     useState<AutoPipStatus>("unsupported");
@@ -2133,7 +2139,6 @@ function DesktopApp() {
       floatingWindowRef.current = null;
       floatingRootRef.current = null;
       setFloatingWindowReady(false);
-      setFloatingWindowEnabled(false);
     });
   }, []);
 
@@ -2217,6 +2222,13 @@ function DesktopApp() {
   }, [theme]);
 
   useEffect(() => {
+    window.localStorage.setItem(
+      FLOATING_WINDOW_STORAGE_KEY,
+      String(floatingWindowEnabled),
+    );
+  }, [floatingWindowEnabled]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
     const syncPageFocus = () => {
@@ -2236,20 +2248,18 @@ function DesktopApp() {
   }, []);
 
   useEffect(() => {
-    if (floatingWindowEnabled) {
-      void openFloatingWindow().catch((error) => {
-        console.error("Floating window failed:", error);
-        setFloatingWindowEnabled(false);
-      });
-      return;
-    }
-
-    if (!autoFloatingWindowRef.current) {
+    if (!floatingWindowEnabled && autoFloatingWindowRef.current) {
       closeFloatingWindow();
     }
-  }, [closeFloatingWindow, floatingWindowEnabled, openFloatingWindow]);
+  }, [closeFloatingWindow, floatingWindowEnabled]);
 
   useEffect(() => closeFloatingWindow, [closeFloatingWindow]);
+
+  useEffect(() => {
+    if (!isActive && floatingWindowReady) {
+      closeFloatingWindow();
+    }
+  }, [closeFloatingWindow, floatingWindowReady, isActive]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2325,17 +2335,21 @@ function DesktopApp() {
       typeof window === "undefined" ||
       !("mediaSession" in navigator) ||
       !supportsFloatingWindow ||
-      !isActive
+      !isActive ||
+      !floatingWindowEnabled
     ) {
       return;
     }
 
     try {
       navigator.mediaSession.setActionHandler(AUTO_PIP_ACTION, () => {
-        setFloatingWindowEnabled(true);
-        void openFloatingWindow().catch((error) => {
-          console.error("Automatic floating window failed:", error);
-        });
+        void openFloatingWindow()
+          .then(() => {
+            autoFloatingWindowRef.current = true;
+          })
+          .catch((error) => {
+            console.error("Automatic floating window failed:", error);
+          });
       });
     } catch (error) {
       console.warn("Automatic floating window is not supported here:", error);
@@ -2349,7 +2363,7 @@ function DesktopApp() {
         // Ignore cleanup failures in browsers that partially expose Media Session.
       }
     };
-  }, [isActive, openFloatingWindow]);
+  }, [floatingWindowEnabled, isActive, openFloatingWindow]);
 
   useEffect(() => {
     const supportsFloatingWindow =
@@ -2360,21 +2374,45 @@ function DesktopApp() {
         }
       ).documentPictureInPicture?.requestWindow;
 
-    if (typeof window === "undefined" || !supportsFloatingWindow || !isActive) {
-      if (autoFloatingWindowRef.current && !floatingWindowEnabled) {
+    if (
+      typeof window === "undefined" ||
+      !supportsFloatingWindow ||
+      !isActive ||
+      !floatingWindowEnabled
+    ) {
+      if (floatingWindowPointerTimerRef.current !== null) {
+        window.clearTimeout(floatingWindowPointerTimerRef.current);
+        floatingWindowPointerTimerRef.current = null;
+      }
+      if (autoFloatingWindowRef.current) {
         closeFloatingWindow();
       }
       return;
     }
 
+    let pointerOutsidePage = false;
+
+    const clearPointerTimer = () => {
+      if (floatingWindowPointerTimerRef.current === null) return;
+      window.clearTimeout(floatingWindowPointerTimerRef.current);
+      floatingWindowPointerTimerRef.current = null;
+    };
+
     const syncFloatingWindowWithFocus = () => {
       const pageFocused = document.hasFocus() && !document.hidden;
+      const shouldFloat = !pageFocused || pointerOutsidePage;
 
-      if (pageFocused) {
+      if (!shouldFloat) {
+        if (autoFloatingWindowRef.current) {
+          closeFloatingWindow();
+        }
         return;
       }
 
-      if (floatingWindowEnabled || autoFloatingWindowRef.current) {
+      if (
+        autoFloatingWindowRef.current ||
+        (floatingWindowRef.current && !floatingWindowRef.current.closed)
+      ) {
         return;
       }
 
@@ -2383,22 +2421,51 @@ function DesktopApp() {
           autoFloatingWindowRef.current = true;
         })
         .catch((error) => {
-          console.error("Focus-based floating window failed:", error);
+          console.info(
+            "Automatic floating window requires browser permission or a manual open:",
+            error,
+          );
         });
+    };
+
+    const handlePointerLeave = () => {
+      pointerOutsidePage = true;
+      clearPointerTimer();
+      floatingWindowPointerTimerRef.current = window.setTimeout(() => {
+        floatingWindowPointerTimerRef.current = null;
+        syncFloatingWindowWithFocus();
+      }, 700);
+    };
+
+    const handlePointerEnter = () => {
+      pointerOutsidePage = false;
+      clearPointerTimer();
+      syncFloatingWindowWithFocus();
     };
 
     syncFloatingWindowWithFocus();
     document.addEventListener("visibilitychange", syncFloatingWindowWithFocus);
     window.addEventListener("focus", syncFloatingWindowWithFocus);
     window.addEventListener("blur", syncFloatingWindowWithFocus);
+    document.documentElement.addEventListener("pointerleave", handlePointerLeave);
+    document.documentElement.addEventListener("pointerenter", handlePointerEnter);
 
     return () => {
+      clearPointerTimer();
       document.removeEventListener(
         "visibilitychange",
         syncFloatingWindowWithFocus,
       );
       window.removeEventListener("focus", syncFloatingWindowWithFocus);
       window.removeEventListener("blur", syncFloatingWindowWithFocus);
+      document.documentElement.removeEventListener(
+        "pointerleave",
+        handlePointerLeave,
+      );
+      document.documentElement.removeEventListener(
+        "pointerenter",
+        handlePointerEnter,
+      );
     };
   }, [
     closeFloatingWindow,
@@ -2523,6 +2590,11 @@ function DesktopApp() {
 
   const continueToPrivacyNotice = useCallback(() => {
     setStartupNoticeStep("privacy");
+    window.setTimeout(() => {
+      privacyNoticeRef.current
+        ?.querySelector<HTMLElement>("[data-privacy-autofocus]")
+        ?.focus();
+    }, 0);
   }, []);
 
   const reviewPrivacyNotice = useCallback(() => {
@@ -2537,7 +2609,9 @@ function DesktopApp() {
     const dialog = showPrivacyPolicy
       ? privacyPolicyRef.current
       : showPrivacyNotice
-        ? privacyNoticeRef.current
+        ? startupNoticeStep === "purpose"
+          ? purposeNoticeRef.current
+          : privacyNoticeRef.current
         : null;
     if (!dialog) return;
 
@@ -2623,6 +2697,66 @@ function DesktopApp() {
     start,
     stop,
   ]);
+
+  useGSAP(
+    () => {
+      const noticeRoot =
+        startupNoticeStep === "purpose"
+          ? purposeNoticeRef.current
+          : privacyNoticeRef.current;
+      if (!showPrivacyNotice || showPrivacyPolicy || !noticeRoot) {
+        return;
+      }
+
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      const revealItems = noticeRoot.querySelectorAll(
+        "[data-onboarding-reveal]",
+      );
+      const ambientShapes = noticeRoot.querySelectorAll(
+        "[data-onboarding-ambient]",
+      );
+
+      if (reduceMotion) {
+        gsap.set(revealItems, { autoAlpha: 1, y: 0, scale: 1 });
+        gsap.set(ambientShapes, { autoAlpha: 1, scale: 1 });
+        return;
+      }
+
+      const timeline = gsap.timeline({ defaults: { ease: "power3.out" } });
+      timeline
+        .fromTo(
+          ambientShapes,
+          { autoAlpha: 0, scale: 0.72 },
+          { autoAlpha: 1, scale: 1, duration: 1.05, stagger: 0.1 },
+        )
+        .fromTo(
+          revealItems,
+          { autoAlpha: 0, y: 22, scale: 0.985 },
+          {
+            autoAlpha: 1,
+            y: 0,
+            scale: 1,
+            duration: 0.58,
+            stagger: 0.09,
+          },
+          0.12,
+        );
+      timeline.eventCallback("onComplete", () => {
+        noticeRoot
+          .querySelector<HTMLElement>("[data-privacy-autofocus]")
+          ?.focus();
+      });
+    },
+    {
+      dependencies: [
+        showPrivacyNotice,
+        showPrivacyPolicy,
+        startupNoticeStep,
+      ],
+    },
+  );
 
   const currentTutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
 
@@ -2937,7 +3071,9 @@ function DesktopApp() {
     : "bg-gradient-to-br from-white to-stone-50 border-stone-200 hover:bg-white";
   const stageClass = isDarkTheme
     ? "bg-[#151412] border-white/8"
-    : "bg-[#fffdf8] border-[#ded8cc]";
+    : isActive
+      ? "bg-[#fffdf8] border-[#ded8cc]"
+      : "bg-[#eef4fa] border-[#cbdbea]";
   const stageGlassClass = isDarkTheme
     ? "bg-black/45 backdrop-blur-md border-white/10"
     : "bg-white/88 backdrop-blur-md border-stone-200";
@@ -2995,14 +3131,6 @@ function DesktopApp() {
         : mlStatus === "degraded"
           ? "ML degraded"
           : "ML unavailable";
-  const mlStatusClass =
-    mlStatus === "connected"
-      ? "border-[#91a889]/30 bg-[#91a889]/10 text-[#b6c8ae]"
-      : mlStatus === "checking"
-        ? accentSoftClass
-        : mlStatus === "degraded"
-          ? "border-amber-400/25 bg-amber-400/10 text-amber-300"
-          : "border-rose-400/25 bg-rose-400/10 text-rose-300";
   const autoPipStatusMessage =
     autoPipStatus === "supported"
       ? "Opens automatically when an active session moves out of focus."
@@ -3281,19 +3409,23 @@ function DesktopApp() {
 
               {!isActive ? (
                 <div
-                  className={`absolute inset-0 flex flex-col items-center justify-center backdrop-blur-sm z-10 ${isDarkTheme ? "bg-black/45" : "bg-white/55"}`}
+                  className={`absolute inset-0 z-10 flex flex-col items-center justify-center backdrop-blur-sm ${isDarkTheme ? "bg-black/45" : "bg-[#eef4fa]/85"}`}
                 >
                   <div
-                    className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 ${isDarkTheme ? "bg-white/5" : "bg-stone-100"}`}
+                    className={`mb-4 flex h-20 w-20 items-center justify-center rounded-full ${isDarkTheme ? "bg-white/5" : "bg-white/65"}`}
                   >
                     <Camera
                       size={32}
                       className={
-                        isDarkTheme ? "text-white/20" : "text-stone-400"
+                        isDarkTheme ? "text-white/20" : "text-[#0A3A72]/45"
                       }
                     />
                   </div>
-                  <p className={`font-medium ${mutedTextClass}`}>
+                  <p
+                    className={`font-medium ${
+                      isDarkTheme ? mutedTextClass : "text-[#0A3A72]/65"
+                    }`}
+                  >
                     Camera Feed Inactive
                   </p>
                 </div>
@@ -3348,14 +3480,6 @@ function DesktopApp() {
                     </div>
                   </>
                 ) : null}
-              </div>
-
-              <div
-                className={`absolute bottom-20 left-5 z-20 rounded-full border px-3 py-2 text-[11px] font-semibold tracking-wide backdrop-blur-md ${mlStatusClass} ${isActive ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"} transition-all motion-reduce:transition-none`}
-                role="status"
-                aria-live="polite"
-              >
-                {mlStatusLabel}
               </div>
 
               <div
@@ -3920,17 +4044,17 @@ function DesktopApp() {
                           className={`flex items-center gap-2 text-sm font-semibold ${subtleTextClass}`}
                         >
                           <Monitor size={16} aria-hidden="true" />
-                          Floating window
+                          Automatic floating window
                         </div>
                         <p className={`mt-1 text-[11px] ${mutedTextClass}`}>
-                          Keep posture status visible outside this tab
+                          Show posture status when you move away
                         </p>
                       </div>
                       <button
                         type="button"
                         role="switch"
                         aria-checked={floatingWindowEnabled}
-                        aria-label="Floating window"
+                        aria-label="Automatic floating window"
                         onClick={() =>
                           floatingWindowSupported &&
                           setFloatingWindowEnabled((value) => !value)
@@ -3961,8 +4085,8 @@ function DesktopApp() {
                       <p
                         className={`text-[11px] leading-relaxed ${mutedTextClass}`}
                       >
-                        Keeps a compact posture status available when you switch
-                        away from this tab.
+                        During an active session, it opens after you switch tabs,
+                        change apps, or leave the page with your pointer.
                       </p>
                     ) : null}
                     <div
@@ -3973,10 +4097,34 @@ function DesktopApp() {
                         {floatingWindowReady
                           ? "Open"
                           : isActive
-                            ? "Live"
+                            ? floatingWindowEnabled
+                              ? "Automatic"
+                              : "Ready"
                             : autoPipStatusLabel}
                       </span>
                     </div>
+                    {floatingWindowSupported ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          autoFloatingWindowRef.current = false;
+                          void openFloatingWindow().catch((error) => {
+                            console.error("Floating window failed:", error);
+                          });
+                        }}
+                        disabled={!isActive}
+                        className={`flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-colors ${
+                          !isActive
+                            ? "cursor-not-allowed border-stone-300 bg-stone-200 text-stone-500 opacity-60"
+                            : isDarkTheme
+                              ? "border-white/15 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
+                              : "border-[#0A3A72]/20 bg-white/70 text-[#0A3A72] hover:bg-white"
+                        }`}
+                      >
+                        <PanelRightOpen size={15} aria-hidden="true" />
+                        Open floating window now
+                      </button>
+                    ) : null}
                   </section>
 
                   <section
@@ -4139,7 +4287,7 @@ function DesktopApp() {
       {floatingRootRef.current
         ? createPortal(
             <FloatingStatusPanel
-              compact={isActive && isPageFocused && !floatingWindowEnabled}
+              compact={isActive && isPageFocused && !floatingWindowReady}
               isActive={isActive}
               pill={pill}
               score={score}
@@ -4153,83 +4301,89 @@ function DesktopApp() {
       !showPrivacyPolicy &&
       startupNoticeStep === "purpose" ? (
         <div
-          className={`fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
+          className={`fixed inset-0 z-[70] overflow-x-hidden overflow-y-auto ${
+            isDarkTheme ? "bg-[#10100f]" : "bg-[#f2efe7]"
+          }`}
         >
-          <div
-            ref={privacyNoticeRef}
+          <main
+            ref={purposeNoticeRef}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="purpose-notice-title"
+            aria-label="Welcome to Uprightly"
             aria-describedby="purpose-notice-description"
-            className={`max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-[1.75rem] border p-5 shadow-[0_28px_90px_-28px_rgba(0,0,0,0.7)] sm:p-7 ${
-              isDarkTheme
-                ? "border-white/12 bg-[#171715] text-[#f4f0e8]"
-                : "border-[#ded8cc] bg-[#fffdf8] text-[#1c1b19]"
+            className={`relative flex min-h-dvh w-full max-w-full items-center justify-center overflow-hidden px-6 py-12 text-center sm:px-10 lg:px-16 ${
+              isDarkTheme ? "text-[#f4f0e8]" : "text-[#1c1b19]"
             }`}
           >
-            <div className="flex items-center gap-3">
-              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${accentSoftClass}`}>
-                <Activity size={21} aria-hidden="true" />
-              </span>
-              <div>
-                <p className={`text-xs font-semibold ${mutedTextClass}`}>
-                  Before you begin · 1 of 2
-                </p>
-                <h2
-                  id="purpose-notice-title"
-                  className="mt-0.5 text-2xl font-bold tracking-[-0.025em]"
-                >
-                  Welcome to Uprightly
-                </h2>
-              </div>
-            </div>
-
-            <p
-              id="purpose-notice-description"
-              className={`mt-5 text-[0.9375rem] leading-6 ${quietTextClass}`}
-            >
-              Uprightly is a real-time posture guidance tool for people who
-              spend time at a computer. It helps you notice how you sit and make
-              small adjustments while you work.
-            </p>
-
             <div
-              className={`mt-5 grid gap-4 rounded-2xl border p-4 ${
-                isDarkTheme
-                  ? "border-white/10 bg-black/20"
-                  : "border-[#e5dfd4] bg-[#f6f2ea]"
+              data-onboarding-ambient
+              aria-hidden="true"
+              className={`pointer-events-none absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl ${
+                isDarkTheme ? "bg-white/[0.035]" : "bg-[#0A3A72]/[0.055]"
               }`}
-            >
-              <div>
-                <h3 className="text-sm font-semibold">How it helps</h3>
-                <p className={`mt-1 text-sm leading-6 ${quietTextClass}`}>
-                  It estimates the alignment of your head, shoulders, and upper
-                  body, then provides calm visual and optional voice feedback
-                  when your posture may need attention.
-                </p>
-              </div>
-              <div
-                className={`border-t pt-4 ${
-                  isDarkTheme ? "border-white/8" : "border-stone-200"
+            />
+            <div
+              data-onboarding-ambient
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-x-0 top-0 h-px ${
+                isDarkTheme ? "bg-white/15" : "bg-[#0A3A72]/20"
+              }`}
+            />
+
+            <div className="relative mx-auto flex w-full max-w-6xl flex-col items-center">
+              <p
+                data-onboarding-reveal
+                className={`text-[clamp(1rem,1.65vw,1.35rem)] font-bold uppercase tracking-[0.24em] ${
+                  isDarkTheme ? "text-white/82" : "text-[#0A3A72]/80"
                 }`}
               >
-                <h3 className="text-sm font-semibold">Guidance, not medical care</h3>
-                <p className={`mt-1 text-sm leading-6 ${quietTextClass}`}>
-                  Uprightly supports posture awareness. It is not intended to
-                  diagnose, treat, or replace advice from a healthcare professional.
-                </p>
-              </div>
-            </div>
+                Welcome to
+              </p>
+              <h1
+                data-onboarding-reveal
+                className={`mt-1 w-full max-w-6xl text-[clamp(4rem,10vw,8.5rem)] font-black uppercase leading-[0.82] tracking-[-0.065em] ${
+                  isDarkTheme ? "text-[#e8e7e2]" : "text-[#0A3A72]"
+                }`}
+              >
+                Uprightly
+              </h1>
 
-            <button
-              type="button"
-              data-privacy-autofocus
-              onClick={continueToPrivacyNotice}
-              className={`mt-5 min-h-11 w-full rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${primaryButtonClass}`}
-            >
-              Continue to privacy
-            </button>
-          </div>
+              <p
+                data-onboarding-reveal
+                className="mt-10 text-[clamp(1.05rem,1.7vw,1.35rem)] font-semibold tracking-[-0.02em]"
+              >
+                Designed to work alongside you
+              </p>
+
+              <p
+                id="purpose-notice-description"
+                data-onboarding-reveal
+                className={`mt-4 max-w-2xl text-sm leading-6 sm:text-base sm:leading-7 ${quietTextClass}`}
+              >
+                Start a session, then continue working or studying in another
+                tab. On supported browsers, Uprightly keeps your posture
+                feedback visible in a small floating window.
+              </p>
+
+              <p
+                data-onboarding-reveal
+                className={`mt-5 text-xs font-medium ${mutedTextClass}`}
+              >
+                Posture guidance only—not medical advice.
+              </p>
+
+              <button
+                type="button"
+                autoFocus
+                data-privacy-autofocus
+                data-onboarding-reveal
+                onClick={continueToPrivacyNotice}
+                className={`mt-8 min-h-12 w-full max-w-sm rounded-xl px-6 py-3 text-sm font-semibold transition-[background-color,transform] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--uprightly-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-transparent motion-reduce:transform-none ${primaryButtonClass}`}
+              >
+                Continue to privacy
+              </button>
+            </div>
+          </main>
         </div>
       ) : null}
 
@@ -4237,130 +4391,153 @@ function DesktopApp() {
       !showPrivacyPolicy &&
       startupNoticeStep === "privacy" ? (
         <div
-          className={`fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-md ${tutorialOverlayClass}`}
+          className={`fixed inset-0 z-[70] overflow-x-hidden overflow-y-auto ${
+            isDarkTheme ? "bg-[#10100f]" : "bg-[#f2efe7]"
+          }`}
         >
-          <div
+          <main
             ref={privacyNoticeRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="privacy-notice-title"
             aria-describedby="privacy-notice-description"
-            className={`max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-[1.75rem] border p-5 shadow-[0_28px_90px_-28px_rgba(0,0,0,0.7)] sm:p-7 ${
-              isDarkTheme
-                ? "border-white/12 bg-[#171715] text-[#f4f0e8]"
-                : "border-[#ded8cc] bg-[#fffdf8] text-[#1c1b19]"
+            className={`relative flex min-h-dvh w-full max-w-full items-center overflow-hidden px-6 py-10 sm:px-10 lg:px-16 ${
+              isDarkTheme ? "text-[#f4f0e8]" : "text-[#1c1b19]"
             }`}
           >
-            <div className="flex items-center gap-3">
-              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${accentSoftClass}`}>
-                <ShieldCheck size={21} aria-hidden="true" />
-              </span>
-              <div>
-                <p className={`text-xs font-semibold ${mutedTextClass}`}>
-                  Privacy before posture guidance · 2 of 2
+            <div
+              data-onboarding-ambient
+              aria-hidden="true"
+              className={`pointer-events-none absolute -right-40 top-1/2 h-[30rem] w-[30rem] -translate-y-1/2 rounded-full blur-3xl ${
+                isDarkTheme ? "bg-white/[0.035]" : "bg-[#0A3A72]/[0.055]"
+              }`}
+            />
+
+            <div className="relative mx-auto grid w-full max-w-6xl gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-20">
+              <section>
+                <p
+                  data-onboarding-reveal
+                  className={`text-xs font-semibold uppercase tracking-[0.18em] ${mutedTextClass}`}
+                >
+                  Privacy before posture guidance
                 </p>
                 <h2
                   id="privacy-notice-title"
-                  className="mt-0.5 text-2xl font-bold tracking-[-0.025em]"
+                  data-onboarding-reveal
+                  className="mt-3 max-w-xl text-[clamp(2.6rem,5vw,5.25rem)] font-bold leading-[0.94] tracking-[-0.055em]"
                 >
                   Your camera stays private
                 </h2>
-              </div>
+                <p
+                  id="privacy-notice-description"
+                  data-onboarding-reveal
+                  className={`mt-6 max-w-lg text-base leading-7 ${quietTextClass}`}
+                >
+                  Uprightly analyzes your camera feed live for posture guidance.
+                  It does not record, upload, or save video clips.
+                </p>
+                <p
+                  data-onboarding-reveal
+                  className={`mt-5 text-xs font-medium ${mutedTextClass}`}
+                >
+                  Uprightly is a guidance tool, not medical care.
+                </p>
+              </section>
+
+              <section data-onboarding-reveal>
+                <div
+                  className={`divide-y border-y text-sm leading-6 ${
+                    isDarkTheme
+                      ? "divide-white/10 border-white/15"
+                      : "divide-[#0A3A72]/15 border-[#0A3A72]/20"
+                  }`}
+                >
+                  <div className="grid gap-1 py-4 sm:grid-cols-[10rem_1fr] sm:gap-5">
+                    <strong>Processed temporarily</strong>
+                    <p className={quietTextClass}>
+                      Camera frames are processed temporarily in your browser
+                      while posture guidance is active.
+                    </p>
+                  </div>
+                  <div className="grid gap-1 py-4 sm:grid-cols-[10rem_1fr] sm:gap-5">
+                    <strong>Measurements only</strong>
+                    <p className={quietTextClass}>
+                      Numerical posture measurements may be sent to the analysis
+                      service—never images or video.
+                    </p>
+                  </div>
+                  <div className="grid gap-1 py-4 sm:grid-cols-[10rem_1fr] sm:gap-5">
+                    <strong>Saved on this device</strong>
+                    <p className={quietTextClass}>
+                      Preferences stay in this browser. Uprightly does not
+                      currently create tracking cookies.
+                    </p>
+                  </div>
+                </div>
+
+                <label
+                  className={`mt-5 flex cursor-pointer items-start gap-3 border-b pb-5 text-sm ${
+                    isDarkTheme
+                      ? "border-white/10 text-white/75"
+                      : "border-[#0A3A72]/15 text-stone-700"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={rememberPrivacyNotice}
+                    onChange={(event) =>
+                      setRememberPrivacyNotice(event.target.checked)
+                    }
+                    className={`mt-0.5 h-4 w-4 shrink-0 ${
+                      isDarkTheme ? "accent-[#e8e7e2]" : "accent-[#0A3A72]"
+                    }`}
+                  />
+                  <span>
+                    <span className="font-semibold">
+                      Don&apos;t show these opening screens again
+                    </span>
+                    <span className={`mt-0.5 block text-xs ${mutedTextClass}`}>
+                      You can revisit this information from Settings at any time.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="mt-5 grid gap-2 sm:grid-cols-[auto_1fr]">
+                  <button
+                    type="button"
+                    onClick={() => setStartupNoticeStep("purpose")}
+                    className={`min-h-12 rounded-xl border px-5 py-3 text-sm font-semibold transition-colors ${
+                      isDarkTheme
+                        ? "border-white/15 bg-transparent text-white/75 hover:bg-white/5 hover:text-white"
+                        : "border-[#0A3A72]/20 bg-transparent text-stone-600 hover:bg-white/50 hover:text-stone-900"
+                    }`}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    autoFocus
+                    data-privacy-autofocus
+                    onClick={continueFromPrivacyNotice}
+                    className={`min-h-12 rounded-xl px-6 py-3 text-sm font-semibold transition-[background-color,transform] hover:-translate-y-0.5 motion-reduce:transform-none ${primaryButtonClass}`}
+                  >
+                    Continue to Uprightly
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openPrivacyPolicy}
+                    className={`min-h-11 rounded-xl px-4 py-2.5 text-sm font-semibold underline-offset-4 transition-colors hover:underline sm:col-span-2 ${
+                      isDarkTheme
+                        ? "text-white/70 hover:text-white"
+                        : "text-[#0A3A72] hover:text-[#082f5d]"
+                    }`}
+                  >
+                    Read Privacy &amp; Data Use
+                  </button>
+                </div>
+              </section>
             </div>
-
-            <p
-              id="privacy-notice-description"
-              className={`mt-5 text-[0.9375rem] leading-6 ${quietTextClass}`}
-            >
-              Uprightly analyzes your camera feed live for posture guidance. It
-              does not record, upload, or save video clips.
-            </p>
-
-            <div
-              className={`mt-5 grid gap-3 rounded-2xl border p-4 text-sm ${
-                isDarkTheme
-                  ? "border-white/10 bg-black/20 text-white/70"
-                  : "border-[#e5dfd4] bg-[#f6f2ea] text-stone-600"
-              }`}
-            >
-              <p>
-                <strong className={isDarkTheme ? "text-white/90" : "text-stone-800"}>
-                  Camera frames
-                </strong>{" "}
-                are processed temporarily in your browser.
-              </p>
-              <p>
-                <strong className={isDarkTheme ? "text-white/90" : "text-stone-800"}>
-                  Numerical posture measurements
-                </strong>{" "}
-                may be sent to the analysis service—never images or video.
-              </p>
-              <p>
-                <strong className={isDarkTheme ? "text-white/90" : "text-stone-800"}>
-                  Local preferences
-                </strong>{" "}
-                stay in this browser. Uprightly does not currently create cookies.
-              </p>
-            </div>
-
-            <label
-              className={`mt-5 flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
-                isDarkTheme
-                  ? "border-white/10 bg-white/[0.025] text-white/75"
-                  : "border-stone-200 bg-white/70 text-stone-700"
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={rememberPrivacyNotice}
-                onChange={(event) =>
-                  setRememberPrivacyNotice(event.target.checked)
-                }
-                className={`mt-0.5 h-4 w-4 shrink-0 ${
-                  isDarkTheme ? "accent-[#e8e7e2]" : "accent-[#0A3A72]"
-                }`}
-              />
-              <span>
-                <span className="font-semibold">Don&apos;t show this message again</span>
-                <span className={`mt-0.5 block text-xs ${mutedTextClass}`}>
-                  Saves only this preference in your browser.
-                </span>
-              </span>
-            </label>
-
-            <div className="mt-5 grid gap-2 sm:grid-cols-[auto_1fr]">
-              <button
-                type="button"
-                onClick={() => setStartupNoticeStep("purpose")}
-                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
-                  isDarkTheme
-                    ? "border-white/15 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white"
-                    : "border-[#ded8cc] bg-white text-stone-600 hover:bg-[#f2efe7] hover:text-stone-900"
-                }`}
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                data-privacy-autofocus
-                onClick={continueFromPrivacyNotice}
-                className={`min-h-11 rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${primaryButtonClass}`}
-              >
-                Continue
-              </button>
-              <button
-                type="button"
-                onClick={openPrivacyPolicy}
-                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors sm:col-span-2 ${
-                  isDarkTheme
-                    ? "border-white/15 bg-white/5 text-white/75 hover:bg-white/10 hover:text-white"
-                    : "border-[#ded8cc] bg-white text-stone-600 hover:bg-[#f2efe7] hover:text-stone-900"
-                }`}
-              >
-                Read Privacy &amp; Data Use
-              </button>
-            </div>
-          </div>
+          </main>
         </div>
       ) : null}
 
