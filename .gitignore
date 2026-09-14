@@ -31,6 +31,10 @@ dist-ssr
 __pycache__/
 *.pyc
 backend/model/
+!backend/model/
+backend/model/*
+!backend/model/uprightly_random_forest_final.joblib
+!backend/model/uprightly_random_forest_meta.json
 
 # Local/raw reference data
 Reference/

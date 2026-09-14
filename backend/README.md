@@ -1,57 +1,30 @@
-# SukatLikod Python ML Backend
+# Uprightly Random Forest Backend
 
-## 1) Prepare your dataset
-Create `backend/data/posture_dataset.csv` with these columns:
+The live posture result currently relies on the supplied three-class Random Forest. MediaPipe runs in the browser only to extract the eight normalized points required by the `uprightly_8point_v1` feature schema; camera images and video are not sent to this API.
 
-- `trunk_angle`
-- `head_forward`
-- `shoulder_tilt`
-- `trunk_variance`
-- `neck_forward_contour`
-- `upper_back_curvature`
-- `torso_outline_angle`
-- `silhouette_stability`
-- `label` (`proper` or `needs_correction`)
+## Install and run
 
-Use `backend/data/posture_dataset.sample.csv` as a format template.
+Use Python dependencies compatible with the saved model (notably scikit-learn 1.6.1):
 
-## 2) Install dependencies
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r backend/requirements.txt
-```
-
-## 3) Train model
-```bash
-python backend/train.py --data backend/data/posture_dataset.csv
-```
-
-Artifacts:
-- `backend/model/posture_model.joblib`
-- `backend/model/model_meta.json`
-
-## 4) Run API
-```bash
 uvicorn backend.api:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Health check:
-`GET http://127.0.0.1:8000/health`
+Configure the frontend in `.env`:
 
-Prediction endpoint:
-`POST http://127.0.0.1:8000/predict`
-
-Request body:
-```json
-{
-  "trunk_angle": 14.3,
-  "head_forward": 0.09,
-  "shoulder_tilt": 0.03,
-  "trunk_variance": 1.2,
-  "neck_forward_contour": 0.08,
-  "upper_back_curvature": 0.05,
-  "torso_outline_angle": 10.7,
-  "silhouette_stability": 0.88
-}
+```bash
+VITE_ML_API_URL=http://127.0.0.1:8000
 ```
+
+## API contract
+
+- `GET /health` returns service readiness.
+- `POST /predict` accepts the 35 numeric features listed in `uprightly_random_forest_meta.json` in a flat JSON object.
+- The response contains `label`, `confidence`, class `probabilities`, probability-derived `score`, and `feedback`.
+
+Supported labels are `neutral_posture`, `mild_asymmetry`, and `severe_misalignment`.
+
+The active artifact is `backend/model/uprightly_random_forest_final.joblib`. Startup fails if its embedded feature order or classes do not match the API contract.

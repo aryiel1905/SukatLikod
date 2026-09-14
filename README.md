@@ -8,8 +8,8 @@ The current product flow is:
 2. guide the user into a front-facing capture
 3. extract pose landmarks and posture features
 4. send features to the backend classifier
-5. return `proper` or `needs_correction`
-6. show actionable feedback in the UI
+5. let the Random Forest return `neutral_posture`, `mild_asymmetry`, or `severe_misalignment`
+6. derive the score from its class probabilities and show its feedback in the UI
 
 Current active scope: front-view posture assessment only.
 

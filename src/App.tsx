@@ -46,6 +46,10 @@ import {
   variance,
 } from "./features/posture/math";
 import { resolvePostureState } from "./features/posture/postureState";
+import {
+  extractRandomForestFeatures,
+  type RandomForestFeatureVector,
+} from "./features/posture/randomForestFeatures";
 import "./features/settings/settings-scroll.css";
 
 gsap.registerPlugin(useGSAP);
@@ -67,6 +71,8 @@ const IDX = {
 const FACE_IDX = {
   NOSE_TIP: 1,
   L_EYE_OUTER: 33,
+  L_EYE_INNER: 133,
+  R_EYE_INNER: 362,
   R_EYE_OUTER: 263,
   L_MOUTH: 61,
   R_MOUTH: 291,
@@ -157,9 +163,13 @@ type DebugMetrics = {
 };
 
 type MlPrediction = {
-  label: "proper" | "needs_correction" | string;
+  label:
+    | "neutral_posture"
+    | "mild_asymmetry"
+    | "severe_misalignment";
   confidence: number;
   probabilities: Record<string, number>;
+  score: number;
   feedback: string;
 };
 
@@ -183,7 +193,6 @@ const EMA_ALPHA = 0.25;
 const VIS_THRESHOLD = 0.35;
 const DRAW_VIS_THRESHOLD = 0.12;
 const HOLD_STILL_MS = 300;
-const PREDICTION_VOTE_WINDOW = 3;
 const AUDIO_COOLDOWN_MS = 5000;
 const HEAD_FORWARD_GRACE_RATIO = 1.2;
 const FRONT_FACE_VISIBILITY_MIN = 0.4;
@@ -804,7 +813,6 @@ function DesktopApp() {
     curvature: null,
     outline: null,
   });
-  const predictionVotesRef = useRef<boolean[]>([]);
   const shoulderWarningActiveRef = useRef(false);
   const lastSmoothedRef = useRef<{
     trunk: number;
@@ -883,6 +891,9 @@ function DesktopApp() {
   });
 
   const [score, setScore] = useState(0);
+  const [mlPostureState, setMlPostureState] = useState<
+    "neutral" | "mild" | "severe" | null
+  >(null);
   const [feedback, setFeedback] = useState("Press Start Session to begin.");
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
 
@@ -949,7 +960,6 @@ function DesktopApp() {
       outline: null,
     };
     lastSmoothedRef.current = null;
-    predictionVotesRef.current = [];
   }, []);
 
   const stop = useCallback(() => {
@@ -975,6 +985,7 @@ function DesktopApp() {
     setFeedback("Press Start Session to begin.");
     setFeedbacks([]);
     setScore(0);
+    setMlPostureState(null);
     setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
     setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
     setAssessmentTier(null);
@@ -1200,6 +1211,7 @@ function DesktopApp() {
       h: number,
       dominant: DominantIssue,
       headThreshold = sensitivity.headDistance,
+      modelState?: "neutral" | "mild" | "severe",
     ) => {
       if (lastFeedbackRef.current === msg) return;
       lastFeedbackRef.current = msg;
@@ -1211,13 +1223,42 @@ function DesktopApp() {
         hour: "2-digit",
         minute: "2-digit",
       });
-      const presentation = getFeedbackPresentation(
-        scoreValue,
-        msg,
-        h,
-        dominant,
-        headThreshold,
-      );
+      const presentation: FeedbackPresentation = modelState
+        ? {
+            type:
+              modelState === "neutral"
+                ? "success"
+                : modelState === "mild"
+                  ? "warning"
+                  : "critical",
+            title:
+              modelState === "neutral"
+                ? "Neutral Posture"
+                : modelState === "mild"
+                  ? "Mild Asymmetry"
+                  : "Severe Misalignment",
+            color:
+              modelState === "neutral"
+                ? "text-[#91a889]"
+                : modelState === "mild"
+                  ? "text-amber-400"
+                  : "text-rose-400",
+            bg:
+              modelState === "neutral"
+                ? "bg-[#91a889]/10 border-[#91a889]/25"
+                : modelState === "mild"
+                  ? "bg-amber-500/10 border-amber-500/20"
+                  : "bg-rose-500/10 border-rose-500/20",
+            text: msg,
+            audio: msg,
+          }
+        : getFeedbackPresentation(
+            scoreValue,
+            msg,
+            h,
+            dominant,
+            headThreshold,
+          );
 
       setFeedbacks((prev) =>
         [
@@ -1238,18 +1279,14 @@ function DesktopApp() {
   );
 
   const inferMl = useCallback(
-    async (payload: {
-      trunk_angle: number;
-      head_forward: number;
-      shoulder_tilt: number;
-      trunk_variance: number;
-      neck_forward_contour: number;
-      upper_back_curvature: number;
-      torso_outline_angle: number;
-      silhouette_stability: number;
-    }): Promise<MlPrediction | null> => {
+    async (
+      payload: RandomForestFeatureVector,
+    ): Promise<MlPrediction | null> => {
       if (!mlApiUrl) {
         setMlStatus("unavailable");
+        setMlPostureState(null);
+        setPill("error");
+        setFeedback("Analysis service unavailable.");
         return null;
       }
       if (inferInFlightRef.current) return null;
@@ -1268,6 +1305,9 @@ function DesktopApp() {
 
         if (!res.ok) {
           setMlStatus("degraded");
+          setMlPostureState(null);
+          setPill("error");
+          setFeedback("Analysis service unavailable.");
           return null;
         }
         const data = (await res.json()) as MlPrediction;
@@ -1275,6 +1315,9 @@ function DesktopApp() {
         return data;
       } catch {
         setMlStatus("unavailable");
+        setMlPostureState(null);
+        setPill("error");
+        setFeedback("Analysis service unavailable.");
         return null;
       } finally {
         inferInFlightRef.current = false;
@@ -1322,16 +1365,6 @@ function DesktopApp() {
     const voices = window.speechSynthesis.getVoices();
     setAvailableVoices(voices.length);
     setSpeechStatus(voices.length > 0 ? "ready" : "loading");
-  }, []);
-
-  const applyPredictionVote = useCallback((ok: boolean) => {
-    predictionVotesRef.current.push(ok);
-    if (predictionVotesRef.current.length > PREDICTION_VOTE_WINDOW) {
-      predictionVotesRef.current.shift();
-    }
-    const good = predictionVotesRef.current.filter(Boolean).length;
-    const bad = predictionVotesRef.current.length - good;
-    return good >= bad;
   }, []);
 
   const speakFeedback = useCallback(
@@ -1662,6 +1695,44 @@ function DesktopApp() {
         return;
       }
 
+      const faceNose = faceLandmarks?.[FACE_IDX.NOSE_TIP];
+      const faceChin = faceLandmarks?.[FACE_IDX.CHIN];
+      const leftEyeOuter = faceLandmarks?.[FACE_IDX.L_EYE_OUTER];
+      const leftEyeInner = faceLandmarks?.[FACE_IDX.L_EYE_INNER];
+      const rightEyeInner = faceLandmarks?.[FACE_IDX.R_EYE_INNER];
+      const rightEyeOuter = faceLandmarks?.[FACE_IDX.R_EYE_OUTER];
+      const rfFeatures =
+        faceNose &&
+        faceChin &&
+        leftEyeOuter &&
+        leftEyeInner &&
+        rightEyeInner &&
+        rightEyeOuter
+          ? extractRandomForestFeatures({
+              N: faceNose,
+              LE: {
+                x: (leftEyeOuter.x + leftEyeInner.x) / 2,
+                y: (leftEyeOuter.y + leftEyeInner.y) / 2,
+              },
+              RE: {
+                x: (rightEyeInner.x + rightEyeOuter.x) / 2,
+                y: (rightEyeInner.y + rightEyeOuter.y) / 2,
+              },
+              LA: lEarN,
+              RA: rEarN,
+              C: faceChin,
+              LS: lsN,
+              RS: rsN,
+            })
+          : null;
+
+      if (!rfFeatures) {
+        setMlPostureState(null);
+        setPill("detecting");
+        setFeedback("Keep your face and both shoulders clearly visible.");
+        return;
+      }
+
       const health = Math.round(
         avgVisibility([noseN, lsN, rsN, lEarN, rEarN, leN, reN, lhN, rhN]) *
           100,
@@ -1967,139 +2038,50 @@ function DesktopApp() {
       });
 
       if (!holdReady) {
-        const clearIssue =
-          d.hRatio >= 1.6 || d.sRatio >= 1.5 || d.tRatio >= 1.4;
-        if (clearIssue) {
-          const quickAudioPrompt =
-            d.dominant === "shoulder"
-              ? "Relax and level your shoulders."
-              : d.dominant === "trunk"
-                ? "Center your head a bit more."
-                : "Bring your head back a little.";
-          speakFeedback("fix", quickAudioPrompt, `quick-${quickAudioPrompt}`);
-        }
         setPill("detecting");
-        setFeedback(
-          captureTier === "upper_front"
-            ? "Hold still and keep both shoulders visible..."
-            : "Hold still for stable reading...",
-        );
+        setFeedback("Hold still while the posture model prepares a reading...");
         return;
       }
 
-      const nextScore = d.score ?? 0;
-      const votedOk = applyPredictionVote(d.ok);
-      const stablePresentation = getFeedbackPresentation(
-        nextScore,
-        d.msg,
-        d.h ?? 0,
-        votedOk ? null : d.dominant,
-        effectiveSensitivity.headDistance,
-      );
-      setScore(nextScore);
-      setFeedback(d.msg);
-      setPill(votedOk ? "good" : "fix");
-      const stablePrompt = votedOk
-        ? captureTier === "full_front"
-          ? "Good posture."
-          : "Looking good. Keep your head centered and shoulders level."
-        : d.msg;
-      if (votedOk) {
-        speakFeedback("good", stablePresentation.audio, `good-${captureTier}`);
-      } else {
+      if (mlPostureState === null) {
+        setPill("detecting");
+        setFeedback("Analyzing posture...");
+      }
+
+      void inferMl(rfFeatures).then((pred) => {
+        if (!pred || !streamRef.current) return;
+
+        const modelState =
+          pred.label === "neutral_posture"
+            ? "neutral"
+            : pred.label === "mild_asymmetry"
+              ? "mild"
+              : "severe";
+        const isNeutral = modelState === "neutral";
+        setMlPostureState(modelState);
+        setScore(pred.score);
+        setFeedback(pred.feedback);
+        setPill(isNeutral ? "good" : "fix");
         speakFeedback(
-          "fix",
-          stablePresentation.audio,
-          stablePresentation.audio,
+          isNeutral ? "good" : "fix",
+          pred.feedback,
+          `random-forest-${pred.label}`,
         );
-      }
-      if (votedOk) {
-        setFeedback(stablePrompt);
-      }
-
-      if (d.t != null && d.h != null) {
-        const logMsg = votedOk ? stablePrompt : d.msg;
         pushFeedback(
-          nextScore,
-          logMsg,
-          d.t,
-          d.h,
-          votedOk ? null : d.dominant,
-          effectiveSensitivity.headDistance,
+          pred.score,
+          pred.feedback,
+          0,
+          0,
+          null,
+          sensitivity.headDistance,
+          modelState,
         );
-      }
-
-      if (
-        captureTier === "full_front" &&
-        d.t != null &&
-        d.h != null &&
-        d.s != null &&
-        d.rawT != null &&
-        d.rawH != null &&
-        d.rawS != null
-      ) {
-        const dT = d.rawT;
-        const dH = d.rawH;
-        const dS = d.rawS;
-        void inferMl({
-          trunk_angle: dT,
-          head_forward: dH,
-          shoulder_tilt: dS,
-          trunk_variance: trunkVar,
-          neck_forward_contour: 0,
-          upper_back_curvature: 0,
-          torso_outline_angle: 0,
-          silhouette_stability: silhouetteStability,
-        }).then((pred) => {
-          if (!pred) return;
-
-          const mlOk = pred.label === "proper";
-          const votedMlOk = applyPredictionVote(mlOk);
-          const mlMsg =
-            pred.feedback ||
-            (mlOk ? "Good posture - keep it." : "Needs correction.");
-          const headOnlyLocalWarning =
-            d.dominant === "head" &&
-            d.hRatio <= HEAD_FORWARD_GRACE_RATIO &&
-            d.tRatio <= 1 &&
-            d.sRatio <= 1;
-          const localBlocksMl = !d.ok && !headOnlyLocalWarning;
-          const finalOk = localBlocksMl ? false : votedMlOk;
-          const finalScore = nextScore;
-          const finalMsg = finalOk ? mlMsg : localBlocksMl ? d.msg : mlMsg;
-          const finalDominant = finalOk || mlOk ? null : d.dominant;
-          const finalPresentation = getFeedbackPresentation(
-            finalScore,
-            finalMsg,
-            dH,
-            finalDominant,
-            effectiveSensitivity.headDistance,
-          );
-
-          setScore(finalScore);
-          setFeedback(finalMsg);
-          setPill(finalOk ? "good" : "fix");
-          if (finalOk) {
-            speakFeedback(
-              "good",
-              finalPresentation.audio,
-              `good-${captureTier}-ml`,
-            );
-          } else {
-            speakFeedback(
-              "fix",
-              finalPresentation.audio,
-              finalPresentation.audio,
-            );
-          }
-          pushFeedback(finalScore, finalMsg, dT, dH, finalDominant);
-        });
-      }
+      });
     },
     [
-      applyPredictionVote,
       computeDecision,
       inferMl,
+      mlPostureState,
       pushFeedback,
       sensitivity,
       speakFeedback,
@@ -3227,12 +3209,16 @@ function DesktopApp() {
   const metricsPaused =
     !isActive || pill === "detecting" || trackingHealth < 45;
 
-  const postureDisplayState = resolvePostureState({
+  const fallbackPostureDisplayState = resolvePostureState({
     status: pill,
     isActive,
     metricsPaused,
     score,
   });
+  const postureDisplayState =
+    isActive && !metricsPaused && mlPostureState
+      ? mlPostureState
+      : fallbackPostureDisplayState;
 
   const postureStateMessage =
     postureDisplayState === "inactive"

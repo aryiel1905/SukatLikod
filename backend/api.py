@@ -4,27 +4,59 @@ import json
 from pathlib import Path
 
 import joblib
-import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 
-MODEL_PATH = Path("backend/model/posture_model.joblib")
-META_PATH = Path("backend/model/model_meta.json")
-DEFAULT_FEATURES = [
-    "trunk_angle",
-    "head_forward",
-    "shoulder_tilt",
-    "trunk_variance",
-    "neck_forward_contour",
-    "upper_back_curvature",
-    "torso_outline_angle",
-    "silhouette_stability",
+MODEL_PATH = Path("backend/model/uprightly_random_forest_final.joblib")
+META_PATH = Path("backend/model/uprightly_random_forest_meta.json")
+SCHEMA_ID = "uprightly_8point_v1"
+FEATURES = [
+    "shoulder_tilt_angle_degrees",
+    "shoulder_height_difference_normalized_signed",
+    "eye_tilt_angle_degrees",
+    "ear_tilt_angle_degrees",
+    "head_axis_tilt_from_vertical_degrees",
+    "eye_span_to_shoulder_ratio",
+    "ear_span_to_shoulder_ratio",
+    "nose_chin_distance_to_shoulder_ratio",
+    "left_ear_to_shoulder_distance_ratio",
+    "right_ear_to_shoulder_distance_ratio",
+    "ear_shoulder_symmetry_difference_normalized_signed",
+    "nose_horizontal_offset_from_shoulders_normalized_signed",
+    "nose_vertical_offset_from_shoulders_normalized_signed",
+    "chin_horizontal_offset_from_shoulders_normalized_signed",
+    "chin_vertical_offset_from_shoulders_normalized_signed",
+    "eye_mid_horizontal_offset_from_shoulders_normalized_signed",
+    "eye_mid_vertical_offset_from_shoulders_normalized_signed",
+    "ear_mid_horizontal_offset_from_shoulders_normalized_signed",
+    "ear_mid_vertical_offset_from_shoulders_normalized_signed",
+    "nose_horizontal_offset_from_eye_mid_normalized_signed",
+    "nose_vertical_offset_from_eye_mid_normalized_signed",
+    "chin_horizontal_offset_from_eye_mid_normalized_signed",
+    "chin_vertical_offset_from_eye_mid_normalized_signed",
+    "nose_horizontal_offset_from_ear_mid_normalized_signed",
+    "nose_vertical_offset_from_ear_mid_normalized_signed",
+    "chin_horizontal_offset_from_ear_mid_normalized_signed",
+    "chin_vertical_offset_from_ear_mid_normalized_signed",
+    "eye_mid_horizontal_offset_from_ear_mid_normalized_signed",
+    "eye_mid_vertical_offset_from_ear_mid_normalized_signed",
+    "left_eye_to_ear_distance_ratio",
+    "right_eye_to_ear_distance_ratio",
+    "eye_ear_symmetry_difference_normalized_signed",
+    "left_nose_to_ear_distance_ratio",
+    "right_nose_to_ear_distance_ratio",
+    "nose_ear_symmetry_difference_normalized_signed",
 ]
-PROPER_CONFIDENCE_THRESHOLD = 0.70
+CLASSES = ["mild_asymmetry", "neutral_posture", "severe_misalignment"]
+FEEDBACK = {
+    "neutral_posture": "Your posture appears balanced.",
+    "mild_asymmetry": "A small alignment adjustment may help.",
+    "severe_misalignment": "Return toward a centered, comfortable upright posture.",
+}
 
-app = FastAPI(title="SukatLikod ML API", version="1.0.0")
-
+app = FastAPI(title="Uprightly posture model API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -39,66 +71,89 @@ app.add_middleware(
 
 
 class PredictRequest(BaseModel):
-    trunk_angle: float = Field(ge=0)
-    head_forward: float = Field(ge=0)
-    shoulder_tilt: float = Field(ge=0)
-    trunk_variance: float = Field(ge=0)
-    neck_forward_contour: float = Field(default=0, ge=0)
-    upper_back_curvature: float = Field(default=0, ge=0)
-    torso_outline_angle: float = Field(default=0, ge=0)
-    silhouette_stability: float = Field(default=0, ge=0)
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    shoulder_tilt_angle_degrees: float
+    shoulder_height_difference_normalized_signed: float
+    eye_tilt_angle_degrees: float
+    ear_tilt_angle_degrees: float
+    head_axis_tilt_from_vertical_degrees: float
+    eye_span_to_shoulder_ratio: float
+    ear_span_to_shoulder_ratio: float
+    nose_chin_distance_to_shoulder_ratio: float
+    left_ear_to_shoulder_distance_ratio: float
+    right_ear_to_shoulder_distance_ratio: float
+    ear_shoulder_symmetry_difference_normalized_signed: float
+    nose_horizontal_offset_from_shoulders_normalized_signed: float
+    nose_vertical_offset_from_shoulders_normalized_signed: float
+    chin_horizontal_offset_from_shoulders_normalized_signed: float
+    chin_vertical_offset_from_shoulders_normalized_signed: float
+    eye_mid_horizontal_offset_from_shoulders_normalized_signed: float
+    eye_mid_vertical_offset_from_shoulders_normalized_signed: float
+    ear_mid_horizontal_offset_from_shoulders_normalized_signed: float
+    ear_mid_vertical_offset_from_shoulders_normalized_signed: float
+    nose_horizontal_offset_from_eye_mid_normalized_signed: float
+    nose_vertical_offset_from_eye_mid_normalized_signed: float
+    chin_horizontal_offset_from_eye_mid_normalized_signed: float
+    chin_vertical_offset_from_eye_mid_normalized_signed: float
+    nose_horizontal_offset_from_ear_mid_normalized_signed: float
+    nose_vertical_offset_from_ear_mid_normalized_signed: float
+    chin_horizontal_offset_from_ear_mid_normalized_signed: float
+    chin_vertical_offset_from_ear_mid_normalized_signed: float
+    eye_mid_horizontal_offset_from_ear_mid_normalized_signed: float
+    eye_mid_vertical_offset_from_ear_mid_normalized_signed: float
+    left_eye_to_ear_distance_ratio: float
+    right_eye_to_ear_distance_ratio: float
+    eye_ear_symmetry_difference_normalized_signed: float
+    left_nose_to_ear_distance_ratio: float
+    right_nose_to_ear_distance_ratio: float
+    nose_ear_symmetry_difference_normalized_signed: float
 
 
 class PredictResponse(BaseModel):
     label: str
     confidence: float
     probabilities: dict[str, float]
+    score: int
     feedback: str
 
 
-def build_feedback(label: str, body: PredictRequest) -> str:
-    if label == "proper":
-        return "Good posture - keep it."
-
-    candidates = [
-        ("trunk_angle", body.trunk_angle, "Straighten your back (reduce trunk lean)."),
-        ("head_forward", body.head_forward, "Bring your head back (avoid head-forward)."),
-        ("shoulder_tilt", body.shoulder_tilt, "Level your shoulders."),
-    ]
-    candidates.sort(key=lambda x: x[1], reverse=True)
-    return candidates[0][2]
-
-
 _model = None
-_features = DEFAULT_FEATURES
 
 
-def gated_label(probabilities: dict[str, float]) -> str:
-    proper_prob = float(probabilities.get("proper", 0.0))
-    needs_prob = float(probabilities.get("needs_correction", 0.0))
+def score_from_probabilities(probabilities: dict[str, float]) -> int:
+    score = (
+        100 * probabilities.get("neutral_posture", 0.0)
+        + 65 * probabilities.get("mild_asymmetry", 0.0)
+        + 25 * probabilities.get("severe_misalignment", 0.0)
+    )
+    return max(0, min(100, int(score + 0.5)))
 
-    # Be strict: only return "proper" when confidence is high enough.
-    if proper_prob >= PROPER_CONFIDENCE_THRESHOLD and proper_prob >= needs_prob:
-        return "proper"
-    return "needs_correction"
+
+def validate_model(model: object) -> None:
+    model_features = list(getattr(model, "feature_names_in_", []))
+    if model_features and model_features != FEATURES:
+        raise RuntimeError("The model feature schema does not match uprightly_8point_v1.")
+
+    model_classes = {str(value) for value in getattr(model, "classes_", [])}
+    if model_classes != set(CLASSES):
+        raise RuntimeError("The model classes do not match Uprightly's three states.")
 
 
 @app.on_event("startup")
 def load_model() -> None:
-    global _model, _features
-
+    global _model
     if not MODEL_PATH.exists():
-        raise RuntimeError(
-            "Model file not found. Train first with: "
-            "python backend/train.py --data backend/data/posture_dataset.csv"
-        )
+        raise RuntimeError(f"Model file not found: {MODEL_PATH}")
 
     _model = joblib.load(MODEL_PATH)
-
+    validate_model(_model)
     if META_PATH.exists():
-        data = json.loads(META_PATH.read_text(encoding="utf-8"))
-        if isinstance(data.get("features"), list) and data["features"]:
-            _features = data["features"]
+        metadata = json.loads(META_PATH.read_text(encoding="utf-8"))
+        if metadata.get("schema_id") != SCHEMA_ID:
+            raise RuntimeError("The model metadata schema ID is not supported.")
+        if metadata.get("features") != FEATURES:
+            raise RuntimeError("The model metadata feature order is not supported.")
 
 
 @app.get("/health")
@@ -111,21 +166,22 @@ def predict(body: PredictRequest) -> PredictResponse:
     if _model is None:
         raise HTTPException(status_code=503, detail="Model is not loaded.")
 
-    row = [[getattr(body, name) for name in _features]]
-    X = np.array(row, dtype=float)
-
-    proba = _model.predict_proba(X)[0]
-    classes = _model.classes_
-    probs = {str(classes[i]): float(proba[i]) for i in range(len(classes))}
-    pred = gated_label(probs)
-    proper_probability = float(probs.get("proper", 0.0))
-    confidence = (
-        proper_probability if pred == "proper" else 1.0 - proper_probability
-    )
+    row = body.model_dump()
+    frame = pd.DataFrame([[row[name] for name in FEATURES]], columns=FEATURES)
+    proba = _model.predict_proba(frame)[0]
+    classes = [str(value) for value in _model.classes_]
+    probabilities = {
+        class_name: float(proba[index])
+        for index, class_name in enumerate(classes)
+    }
+    label = str(_model.predict(frame)[0])
+    if label not in FEEDBACK:
+        raise HTTPException(status_code=500, detail="Model returned an unknown class.")
 
     return PredictResponse(
-        label=str(pred),
-        confidence=confidence,
-        probabilities=probs,
-        feedback=build_feedback(str(pred), body),
+        label=label,
+        confidence=probabilities[label],
+        probabilities=probabilities,
+        score=score_from_probabilities(probabilities),
+        feedback=FEEDBACK[label],
     )
