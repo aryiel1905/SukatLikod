@@ -48,6 +48,8 @@ import {
 import { resolvePostureState } from "./features/posture/postureState";
 import {
   extractRandomForestFeatures,
+  validateRandomForestFrame,
+  type RandomForestEightPoints,
   type RandomForestFeatureVector,
 } from "./features/posture/randomForestFeatures";
 import "./features/settings/settings-scroll.css";
@@ -81,6 +83,13 @@ const FACE_IDX = {
 
 type Pill = "idle" | "loading" | "detecting" | "good" | "fix" | "error";
 type Point3 = { x: number; y: number; z: number };
+type ModelPostureState = "neutral" | "mild" | "severe";
+type PredictionCandidate = {
+  state: ModelPostureState;
+  firstSeenAt: number;
+  samples: number;
+  prediction: MlPrediction;
+};
 type FeedbackType = "info" | "warning" | "critical" | "success";
 type OrientationKind =
   | "front"
@@ -193,6 +202,11 @@ const EMA_ALPHA = 0.25;
 const VIS_THRESHOLD = 0.35;
 const DRAW_VIS_THRESHOLD = 0.12;
 const HOLD_STILL_MS = 300;
+const RF_CORE_VISIBILITY = 0.5;
+const PREDICTION_INITIAL_SAMPLES = 2;
+const PREDICTION_TRANSITION_SAMPLES = 3;
+const PREDICTION_CONFIRMATION_MS = 1200;
+const ACTIVITY_STATE_COOLDOWN_MS = 12000;
 const AUDIO_COOLDOWN_MS = 5000;
 const HEAD_FORWARD_GRACE_RATIO = 1.2;
 const FRONT_FACE_VISIBILITY_MIN = 0.4;
@@ -209,7 +223,6 @@ const CHIN_LIFT_PROXY_NEUTRAL = 0.55;
 const CHIN_LIFT_PROXY_TO_HEAD_LEAN_SCALE = 0.45;
 const CHIN_LIFT_PROXY_THRESHOLD = 0.95;
 const CHIN_LIFT_PROXY_SEVERE = 1.15;
-const UPPER_FRONT_TRACKING_MIN = 62;
 const UPPER_FRONT_FRAME_MARGIN = 0.08;
 const THEME_STORAGE_KEY = "sukatlikod-theme";
 const TUTORIAL_SEEN_STORAGE_KEY = "uprightly-tutorial-seen";
@@ -775,6 +788,12 @@ function DesktopApp() {
 
   const lastVideoTimeRef = useRef<number>(-1);
   const lastFeedbackRef = useRef<string>("");
+  const lastActivityStateRef = useRef<{
+    state: ModelPostureState;
+    at: number;
+  } | null>(null);
+  const predictionCandidateRef = useRef<PredictionCandidate | null>(null);
+  const confirmedModelStateRef = useRef<ModelPostureState | null>(null);
   const lastSpokenMessageRef = useRef<string>("");
   const lastInferTsRef = useRef<number>(0);
   const inferInFlightRef = useRef<boolean>(false);
@@ -892,9 +911,10 @@ function DesktopApp() {
 
   const [score, setScore] = useState(0);
   const [mlPostureState, setMlPostureState] = useState<
-    "neutral" | "mild" | "severe" | null
+    ModelPostureState | null
   >(null);
   const [feedback, setFeedback] = useState("Press Start Session to begin.");
+  const [confirmedFeedback, setConfirmedFeedback] = useState("");
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
 
   const [, setMetrics] = useState({
@@ -942,6 +962,9 @@ function DesktopApp() {
     buffersRef.current.outline = [];
     lastVideoTimeRef.current = -1;
     lastFeedbackRef.current = "";
+    lastActivityStateRef.current = null;
+    predictionCandidateRef.current = null;
+    confirmedModelStateRef.current = null;
     lastSpokenMessageRef.current = "";
     holdStillStartRef.current = 0;
     lastAudioEventRef.current = { key: "", at: 0 };
@@ -983,6 +1006,7 @@ function DesktopApp() {
     setIsActive(false);
     setPill("idle");
     setFeedback("Press Start Session to begin.");
+    setConfirmedFeedback("");
     setFeedbacks([]);
     setScore(0);
     setMlPostureState(null);
@@ -1211,12 +1235,22 @@ function DesktopApp() {
       h: number,
       dominant: DominantIssue,
       headThreshold = sensitivity.headDistance,
-      modelState?: "neutral" | "mild" | "severe",
+      modelState?: ModelPostureState,
     ) => {
-      if (lastFeedbackRef.current === msg) return;
-      lastFeedbackRef.current = msg;
-
       const now = Date.now();
+      if (modelState) {
+        const previous = lastActivityStateRef.current;
+        if (
+          previous?.state === modelState &&
+          now - previous.at < ACTIVITY_STATE_COOLDOWN_MS
+        ) {
+          return;
+        }
+        lastActivityStateRef.current = { state: modelState, at: now };
+      } else {
+        if (lastFeedbackRef.current === msg) return;
+        lastFeedbackRef.current = msg;
+      }
 
       const time = new Date(now).toLocaleTimeString([], {
         hour12: false,
@@ -1285,6 +1319,8 @@ function DesktopApp() {
       if (!mlApiUrl) {
         setMlStatus("unavailable");
         setMlPostureState(null);
+        confirmedModelStateRef.current = null;
+        predictionCandidateRef.current = null;
         setPill("error");
         setFeedback("Analysis service unavailable.");
         return null;
@@ -1306,6 +1342,8 @@ function DesktopApp() {
         if (!res.ok) {
           setMlStatus("degraded");
           setMlPostureState(null);
+          confirmedModelStateRef.current = null;
+          predictionCandidateRef.current = null;
           setPill("error");
           setFeedback("Analysis service unavailable.");
           return null;
@@ -1316,6 +1354,8 @@ function DesktopApp() {
       } catch {
         setMlStatus("unavailable");
         setMlPostureState(null);
+        confirmedModelStateRef.current = null;
+        predictionCandidateRef.current = null;
         setPill("error");
         setFeedback("Analysis service unavailable.");
         return null;
@@ -1413,6 +1453,72 @@ function DesktopApp() {
     [audioMode],
   );
 
+  const commitModelPrediction = useCallback(
+    (pred: MlPrediction) => {
+      const state: ModelPostureState =
+        pred.label === "neutral_posture"
+          ? "neutral"
+          : pred.label === "mild_asymmetry"
+            ? "mild"
+            : "severe";
+      const now = Date.now();
+      const candidate = predictionCandidateRef.current;
+      const nextCandidate: PredictionCandidate =
+        candidate?.state === state
+          ? {
+              ...candidate,
+              samples: candidate.samples + 1,
+              prediction: pred,
+            }
+          : {
+              state,
+              firstSeenAt: now,
+              samples: 1,
+              prediction: pred,
+            };
+      predictionCandidateRef.current = nextCandidate;
+
+      const confirmed = confirmedModelStateRef.current;
+      if (confirmed === state) {
+        setScore(pred.score);
+        setFeedback(pred.feedback);
+        setConfirmedFeedback(pred.feedback);
+        setPill(state === "neutral" ? "good" : "fix");
+        return;
+      }
+
+      const requiredSamples = confirmed
+        ? PREDICTION_TRANSITION_SAMPLES
+        : PREDICTION_INITIAL_SAMPLES;
+      const isStable =
+        nextCandidate.samples >= requiredSamples &&
+        now - nextCandidate.firstSeenAt >= PREDICTION_CONFIRMATION_MS;
+      if (!isStable) return;
+
+      confirmedModelStateRef.current = state;
+      setMlPostureState(state);
+      setScore(nextCandidate.prediction.score);
+      setFeedback(nextCandidate.prediction.feedback);
+      setConfirmedFeedback(nextCandidate.prediction.feedback);
+      setPill(state === "neutral" ? "good" : "fix");
+      speakFeedback(
+        state === "neutral" ? "good" : "fix",
+        nextCandidate.prediction.feedback,
+        `random-forest-${nextCandidate.prediction.label}`,
+      );
+      pushFeedback(
+        nextCandidate.prediction.score,
+        nextCandidate.prediction.feedback,
+        0,
+        0,
+        null,
+        sensitivity.headDistance,
+        state,
+      );
+    },
+    [pushFeedback, sensitivity.headDistance, speakFeedback],
+  );
+
   const draw = useCallback(
     (result: PoseLandmarkerResult, faceResult?: FaceLandmarkerResult) => {
       const canvas = canvasRef.current;
@@ -1425,10 +1531,56 @@ function DesktopApp() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const landmarks = result.landmarks?.[0];
-      const world = result.worldLandmarks?.[0];
       const faceLandmarks = getPrimaryFaceLandmarks(faceResult);
-      if (landmarks && world) {
-        const orient = detectOrientation(world as Point3[], landmarks);
+      const faceNose = faceLandmarks?.[FACE_IDX.NOSE_TIP];
+      const faceChin = faceLandmarks?.[FACE_IDX.CHIN];
+      const leftEyeOuter = faceLandmarks?.[FACE_IDX.L_EYE_OUTER];
+      const leftEyeInner = faceLandmarks?.[FACE_IDX.L_EYE_INNER];
+      const rightEyeInner = faceLandmarks?.[FACE_IDX.R_EYE_INNER];
+      const rightEyeOuter = faceLandmarks?.[FACE_IDX.R_EYE_OUTER];
+      if (
+        landmarks &&
+        faceNose &&
+        faceChin &&
+        leftEyeOuter &&
+        leftEyeInner &&
+        rightEyeInner &&
+        rightEyeOuter
+      ) {
+        const canonicalNodes: Record<keyof RandomForestEightPoints, Point3> = {
+          N: { ...faceNose, z: 0 },
+          LE: {
+            x: (leftEyeOuter.x + leftEyeInner.x) / 2,
+            y: (leftEyeOuter.y + leftEyeInner.y) / 2,
+            z: 0,
+          },
+          RE: {
+            x: (rightEyeInner.x + rightEyeOuter.x) / 2,
+            y: (rightEyeInner.y + rightEyeOuter.y) / 2,
+            z: 0,
+          },
+          LA: landmarks[IDX.L_EAR],
+          RA: landmarks[IDX.R_EAR],
+          C: { ...faceChin, z: 0 },
+          LS: landmarks[IDX.L_SHOULDER],
+          RS: landmarks[IDX.R_SHOULDER],
+        };
+        const coreVisible = [
+          canonicalNodes.LA,
+          canonicalNodes.RA,
+          canonicalNodes.LS,
+          canonicalNodes.RS,
+        ].every((point) => visOk(point, RF_CORE_VISIBILITY));
+        const canonicalFrame = validateRandomForestFrame(canonicalNodes);
+        if (!coreVisible || !canonicalFrame.valid) {
+          ctx.restore();
+          return;
+        }
+
+        const world = result.worldLandmarks?.[0];
+        const orient = world
+          ? detectOrientation(world as Point3[], landmarks)
+          : { kind: "unknown" as OrientationKind, label: "Unknown" };
         const dominantSide = dominantSideFromNorm(landmarks);
         const neckNorm: Point3 = {
           x: (landmarks[IDX.L_SHOULDER].x + landmarks[IDX.R_SHOULDER].x) / 2,
@@ -1456,74 +1608,46 @@ function DesktopApp() {
         let nodes: NodeRef[] = [];
         let links: Array<[NodeRef, NodeRef]> = [];
 
-        if (orient.kind === "front") {
+        if (canonicalFrame.valid) {
           nodes =
             overlayDetail === "detailed"
               ? [
-                  IDX.NOSE,
-                  IDX.L_EYE,
-                  IDX.R_EYE,
-                  IDX.L_EAR,
-                  IDX.R_EAR,
-                  IDX.L_SHOULDER,
-                  IDX.R_SHOULDER,
-                  IDX.L_ELBOW,
-                  IDX.R_ELBOW,
-                  IDX.L_HIP,
-                  IDX.R_HIP,
-                  ...(faceLandmarks
-                    ? [{ ...faceLandmarks[FACE_IDX.CHIN] }]
-                    : []),
+                  canonicalNodes.N,
+                  canonicalNodes.LE,
+                  canonicalNodes.RE,
+                  canonicalNodes.LA,
+                  canonicalNodes.RA,
+                  canonicalNodes.C,
+                  canonicalNodes.LS,
+                  canonicalNodes.RS,
                 ]
               : [
-                  IDX.NOSE,
-                  IDX.L_EAR,
-                  IDX.R_EAR,
-                  IDX.L_SHOULDER,
-                  IDX.R_SHOULDER,
-                  IDX.L_HIP,
-                  IDX.R_HIP,
-                  ...(faceLandmarks
-                    ? [{ ...faceLandmarks[FACE_IDX.CHIN] }]
-                    : []),
+                  canonicalNodes.N,
+                  canonicalNodes.LE,
+                  canonicalNodes.RE,
+                  canonicalNodes.LA,
+                  canonicalNodes.RA,
+                  canonicalNodes.C,
+                  canonicalNodes.LS,
+                  canonicalNodes.RS,
                 ];
           links =
             overlayDetail === "detailed"
               ? [
-                  [IDX.NOSE, IDX.L_EYE],
-                  [IDX.NOSE, IDX.R_EYE],
-                  [IDX.L_EYE, IDX.L_EAR],
-                  [IDX.R_EYE, IDX.R_EAR],
-                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
-                  [IDX.L_SHOULDER, IDX.L_ELBOW],
-                  [IDX.R_SHOULDER, IDX.R_ELBOW],
-                  [IDX.L_SHOULDER, IDX.L_HIP],
-                  [IDX.R_SHOULDER, IDX.R_HIP],
-                  [IDX.L_HIP, IDX.R_HIP],
-                  ...(faceLandmarks
-                    ? [
-                        [IDX.NOSE, { ...faceLandmarks[FACE_IDX.CHIN] }] as [
-                          NodeRef,
-                          NodeRef,
-                        ],
-                      ]
-                    : []),
+                  [canonicalNodes.LE, canonicalNodes.RE],
+                  [canonicalNodes.LA, canonicalNodes.RA],
+                  [canonicalNodes.N, canonicalNodes.C],
+                  [canonicalNodes.LS, canonicalNodes.RS],
+                  [canonicalNodes.LE, canonicalNodes.N],
+                  [canonicalNodes.RE, canonicalNodes.N],
+                  [canonicalNodes.LA, canonicalNodes.LS],
+                  [canonicalNodes.RA, canonicalNodes.RS],
                 ]
               : [
-                  [IDX.NOSE, IDX.L_EAR],
-                  [IDX.NOSE, IDX.R_EAR],
-                  [IDX.L_SHOULDER, IDX.R_SHOULDER],
-                  [IDX.L_SHOULDER, IDX.L_HIP],
-                  [IDX.R_SHOULDER, IDX.R_HIP],
-                  [IDX.L_HIP, IDX.R_HIP],
-                  ...(faceLandmarks
-                    ? [
-                        [IDX.NOSE, { ...faceLandmarks[FACE_IDX.CHIN] }] as [
-                          NodeRef,
-                          NodeRef,
-                        ],
-                      ]
-                    : []),
+                  [canonicalNodes.LE, canonicalNodes.RE],
+                  [canonicalNodes.LA, canonicalNodes.RA],
+                  [canonicalNodes.N, canonicalNodes.C],
+                  [canonicalNodes.LS, canonicalNodes.RS],
                 ];
         } else if (
           orient.kind === "side_left" ||
@@ -1688,9 +1812,7 @@ function DesktopApp() {
         !lsN ||
         !rsN ||
         !lEarN ||
-        !rEarN ||
-        !leN ||
-        !reN
+        !rEarN
       ) {
         return;
       }
@@ -1701,14 +1823,14 @@ function DesktopApp() {
       const leftEyeInner = faceLandmarks?.[FACE_IDX.L_EYE_INNER];
       const rightEyeInner = faceLandmarks?.[FACE_IDX.R_EYE_INNER];
       const rightEyeOuter = faceLandmarks?.[FACE_IDX.R_EYE_OUTER];
-      const rfFeatures =
+      const rfPoints: RandomForestEightPoints | null =
         faceNose &&
         faceChin &&
         leftEyeOuter &&
         leftEyeInner &&
         rightEyeInner &&
         rightEyeOuter
-          ? extractRandomForestFeatures({
+          ? {
               N: faceNose,
               LE: {
                 x: (leftEyeOuter.x + leftEyeInner.x) / 2,
@@ -1723,103 +1845,56 @@ function DesktopApp() {
               C: faceChin,
               LS: lsN,
               RS: rsN,
-            })
+            }
+          : null;
+      const corePoseVisible = [lEarN, rEarN, lsN, rsN].every((point) =>
+        visOk(point, RF_CORE_VISIBILITY),
+      );
+      // Report tracking health before the canonical-frame gate. Otherwise a
+      // rejected frame leaves the UI stuck at 0%, even when MediaPipe is
+      // actively seeing the person.
+      const health = Math.round(
+        avgVisibility([lsN, rsN, lEarN, rEarN], RF_CORE_VISIBILITY) * 100,
+      );
+      setTrackingHealth(health);
+      const frameValidation = rfPoints
+        ? validateRandomForestFrame(rfPoints)
+        : { valid: false as const, issue: "missing_landmark" as const };
+      const rfFeatures =
+        corePoseVisible && frameValidation.valid && rfPoints
+          ? extractRandomForestFeatures(rfPoints)
           : null;
 
       if (!rfFeatures) {
-        setMlPostureState(null);
-        setPill("detecting");
-        setFeedback("Keep your face and both shoulders clearly visible.");
-        return;
-      }
-
-      const health = Math.round(
-        avgVisibility([noseN, lsN, rsN, lEarN, rEarN, leN, reN, lhN, rhN]) *
-          100,
-      );
-      setTrackingHealth(health);
-
-      if (!visOk(noseN) || !visOk(lsN) || !visOk(rsN) || health < 45) {
+        predictionCandidateRef.current = null;
+        holdStillStartRef.current = 0;
+        lastSmoothedRef.current = null;
         setPill("detecting");
         setFeedback(
-          "Low landmark confidence. Improve lighting and hold still.",
+          !corePoseVisible
+            ? "Keep both ears and shoulders clearly visible."
+            : "Face the camera and keep the full eight-point guide visible.",
         );
         return;
       }
 
-      const orient = detectOrientation(world as Point3[], norm);
+      if (health < RF_CORE_VISIBILITY * 100) {
+        predictionCandidateRef.current = null;
+        setPill("detecting");
+        setFeedback(
+          "Low landmark confidence. Improve lighting and face the camera.",
+        );
+        return;
+      }
+
       const frontCapture = classifyFrontCapture(
         world as Point3[],
         norm as { x: number; y: number; z: number; visibility?: number }[],
       );
-
-      if (orient.kind === "unknown") {
-        holdStillStartRef.current = 0;
-        lastSmoothedRef.current = null;
-        setPill("detecting");
-        setScore(0);
-        setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setAssessmentTier(null);
-        setDebugMetrics(DEFAULT_DEBUG_METRICS);
-        setSilhouetteMetrics(DEFAULT_SILHOUETTE_METRICS);
-        setStabilityScore(0);
-        setFeedback("Move into view.");
-        return;
-      }
-
-      if (orient.kind !== "front") {
-        holdStillStartRef.current = 0;
-        lastSmoothedRef.current = null;
-        setPill("detecting");
-        setScore(0);
-        setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setAssessmentTier(null);
-        setDebugMetrics(DEFAULT_DEBUG_METRICS);
-        setSilhouetteMetrics(DEFAULT_SILHOUETTE_METRICS);
-        setStabilityScore(0);
-        setFeedback(
-          orient.kind === "back"
-            ? "Face the camera."
-            : "Turn and face the camera.",
-        );
-        return;
-      }
-
-      if (!frontCapture.tier) {
-        holdStillStartRef.current = 0;
-        lastSmoothedRef.current = null;
-        setPill("detecting");
-        setScore(0);
-        setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setAssessmentTier(null);
-        setDebugMetrics(DEFAULT_DEBUG_METRICS);
-        setSilhouetteMetrics(DEFAULT_SILHOUETTE_METRICS);
-        setStabilityScore(0);
-        setFeedback(
-          frontCapture.upperVisible
-            ? "Face the camera more directly."
-            : "Keep your face and shoulders visible.",
-        );
-        return;
-      }
-
-      const captureTier = frontCapture.tier;
+      const captureTier: FrontCaptureTier = frontCapture.tier ?? "upper_front";
       setAssessmentTier(captureTier);
       const tierLabel =
         captureTier === "full_front" ? "Front view" : "Upper-front view";
-      if (captureTier === "upper_front" && health < UPPER_FRONT_TRACKING_MIN) {
-        holdStillStartRef.current = 0;
-        lastSmoothedRef.current = null;
-        setPill("detecting");
-        setScore(0);
-        setMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setSignedMetrics({ trunkAngle: 0, headForward: 0, shoulderTilt: 0 });
-        setFeedback("Keep both shoulders in view.");
-        return;
-      }
       const hipsReady =
         captureTier === "full_front" && !!lh && !!rh && !!lhN && !!rhN;
 
@@ -2043,48 +2118,21 @@ function DesktopApp() {
         return;
       }
 
-      if (mlPostureState === null) {
+      if (confirmedModelStateRef.current === null) {
         setPill("detecting");
         setFeedback("Analyzing posture...");
       }
 
       void inferMl(rfFeatures).then((pred) => {
         if (!pred || !streamRef.current) return;
-
-        const modelState =
-          pred.label === "neutral_posture"
-            ? "neutral"
-            : pred.label === "mild_asymmetry"
-              ? "mild"
-              : "severe";
-        const isNeutral = modelState === "neutral";
-        setMlPostureState(modelState);
-        setScore(pred.score);
-        setFeedback(pred.feedback);
-        setPill(isNeutral ? "good" : "fix");
-        speakFeedback(
-          isNeutral ? "good" : "fix",
-          pred.feedback,
-          `random-forest-${pred.label}`,
-        );
-        pushFeedback(
-          pred.score,
-          pred.feedback,
-          0,
-          0,
-          null,
-          sensitivity.headDistance,
-          modelState,
-        );
+        commitModelPrediction(pred);
       });
     },
     [
       computeDecision,
+      commitModelPrediction,
       inferMl,
-      mlPostureState,
-      pushFeedback,
       sensitivity,
-      speakFeedback,
     ],
   );
 
@@ -3207,7 +3255,8 @@ function DesktopApp() {
     ).documentPictureInPicture?.requestWindow;
 
   const metricsPaused =
-    !isActive || pill === "detecting" || trackingHealth < 45;
+    !isActive ||
+    (!mlPostureState && (pill === "detecting" || trackingHealth < 45));
 
   const fallbackPostureDisplayState = resolvePostureState({
     status: pill,
@@ -3216,7 +3265,7 @@ function DesktopApp() {
     score,
   });
   const postureDisplayState =
-    isActive && !metricsPaused && mlPostureState
+    isActive && pill !== "error" && mlPostureState
       ? mlPostureState
       : fallbackPostureDisplayState;
 
@@ -3226,12 +3275,12 @@ function DesktopApp() {
       : postureDisplayState === "analyzing"
         ? isLoading
           ? "Preparing the camera and posture tracking."
-          : "Keep your head and shoulders visible, then hold still."
+          : feedback
         : postureDisplayState === "neutral"
-          ? "Your head and shoulders appear balanced."
+          ? confirmedFeedback || "Your posture appears balanced."
           : postureDisplayState === "unavailable"
             ? "Check camera permission, then try starting again."
-            : feedback;
+            : confirmedFeedback || feedback;
 
   const autoPipStatusLabel =
     autoPipStatus === "supported"

@@ -40,7 +40,7 @@ export type RandomForestFeatureName =
   (typeof RANDOM_FOREST_FEATURE_NAMES)[number];
 export type RandomForestFeatureVector = Record<RandomForestFeatureName, number>;
 
-type Point2 = { x: number; y: number };
+export type Point2 = { x: number; y: number };
 
 export type RandomForestEightPoints = {
   N: Point2;
@@ -53,6 +53,15 @@ export type RandomForestEightPoints = {
   RS: Point2;
 };
 
+export type RandomForestFrameIssue =
+  | "missing_landmark"
+  | "outside_frame"
+  | "shoulders_too_narrow";
+
+export type RandomForestFrameValidation =
+  | { valid: true }
+  | { valid: false; issue: RandomForestFrameIssue };
+
 const distance = (a: Point2, b: Point2) => Math.hypot(a.x - b.x, a.y - b.y);
 const midpoint = (a: Point2, b: Point2): Point2 => ({
   x: (a.x + b.x) / 2,
@@ -61,19 +70,49 @@ const midpoint = (a: Point2, b: Point2): Point2 => ({
 const lineAngle = (a: Point2, b: Point2) =>
   (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
 
-export function extractRandomForestFeatures(
+/**
+ * Validates whether an eight-point camera frame has the same canonical topology
+ * used to construct the trained feature schema. This is deliberately a capture
+ * quality check, not a posture classifier: it does not constrain tilt, leaning,
+ * or the model's eventual severity label.
+ */
+export function validateRandomForestFrame(
   points: RandomForestEightPoints,
-): RandomForestFeatureVector | null {
+): RandomForestFrameValidation {
+  const allPoints = Object.values(points);
   if (
-    Object.values(points).some(
+    allPoints.some(
       (point) => !Number.isFinite(point.x) || !Number.isFinite(point.y),
     )
   ) {
-    return null;
+    return { valid: false, issue: "missing_landmark" };
+  }
+
+  // MediaPipe can predict slightly outside a frame at the edge, but a point
+  // farther away is not a usable camera capture.
+  if (
+    allPoints.some(
+      (point) =>
+        point.x < -0.15 || point.x > 1.15 || point.y < -0.15 || point.y > 1.15,
+    )
+  ) {
+    return { valid: false, issue: "outside_frame" };
   }
 
   const shoulderWidth = distance(points.LS, points.RS);
-  if (shoulderWidth < 0.04) return null;
+  if (shoulderWidth < 0.04) {
+    return { valid: false, issue: "shoulders_too_narrow" };
+  }
+
+  return { valid: true };
+}
+
+export function extractRandomForestFeatures(
+  points: RandomForestEightPoints,
+): RandomForestFeatureVector | null {
+  if (!validateRandomForestFrame(points).valid) return null;
+
+  const shoulderWidth = distance(points.LS, points.RS);
 
   const shoulderMid = midpoint(points.LS, points.RS);
   const eyeMid = midpoint(points.LE, points.RE);

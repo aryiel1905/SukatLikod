@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractRandomForestFeatures,
   RANDOM_FOREST_FEATURE_NAMES,
+  validateRandomForestFrame,
 } from "./randomForestFeatures";
 
 const symmetricPoints = {
@@ -68,5 +69,35 @@ describe("extractRandomForestFeatures", () => {
         N: { x: Number.NaN, y: 0.3 },
       }),
     ).toBeNull();
+  });
+
+  it("accepts posture tilt while retaining the canonical eight-point topology", () => {
+    const result = validateRandomForestFrame({
+      ...symmetricPoints,
+      LS: { x: 0.3, y: 0.76 },
+      RS: { x: 0.7, y: 0.68 },
+      LE: { x: 0.44, y: 0.31 },
+      RE: { x: 0.56, y: 0.39 },
+      N: { x: 0.5, y: 0.37 },
+      C: { x: 0.5, y: 0.59 },
+    });
+
+    expect(result).toEqual({ valid: true });
+  });
+
+  it("only rejects unusable capture geometry, not a posture the model should classify", () => {
+    expect(
+      validateRandomForestFrame({
+        ...symmetricPoints,
+        RE: { x: 1.3, y: 0.35 },
+      }),
+    ).toEqual({ valid: false, issue: "outside_frame" });
+
+    expect(
+      validateRandomForestFrame({
+        ...symmetricPoints,
+        C: { x: 0.5, y: 0.28 },
+      }),
+    ).toEqual({ valid: true });
   });
 });
